@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str
     ALLOWED_ORIGINS: str = "http://localhost:3000"
+    APP_AUTH_LOGIN: str = "admin"
+    APP_AUTH_PASSWORD_HASH: str = ""
+    APP_AUTH_COOKIE_SECURE: bool = True
+    APP_AUTH_SESSION_TTL_HOURS: int = 24
 
     # Database
     DATABASE_URL: str

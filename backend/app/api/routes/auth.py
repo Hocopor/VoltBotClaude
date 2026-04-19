@@ -1,4 +1,4 @@
-"""Auth routes for Codex OAuth and API key management."""
+"""Auth routes for app login, Codex OAuth, and API key management."""
 
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from loguru import logger
 from pydantic import BaseModel
@@ -18,6 +18,13 @@ from app.database import AsyncSessionLocal, get_db
 from app.models import AuthToken
 from app.services.ai_service import ai_service
 from app.services.bybit_service import bybit_service
+from app.security import (
+    create_session_token,
+    get_authenticated_login_from_request,
+    require_authenticated_user,
+    session_cookie_settings,
+    verify_password,
+)
 
 router = APIRouter()
 _oauth_state: dict[str, str] = {}
@@ -30,10 +37,18 @@ class APIKeysUpdate(BaseModel):
 
 
 class AuthStatus(BaseModel):
+    authenticated: bool
+    app_login_configured: bool
+    app_login: Optional[str] = None
     codex_connected: bool
     deepseek_configured: bool
     bybit_configured: bool
     codex_expires_at: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    login: str
+    password: str
 
 
 def _write_env_updates(path_str: str, updates: dict[str, str]) -> None:
@@ -53,8 +68,39 @@ def _write_env_updates(path_str: str, updates: dict[str, str]) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+@router.get("/session")
+async def auth_session(request: Request):
+    current_login = get_authenticated_login_from_request(request)
+    return {"authenticated": bool(current_login), "login": current_login}
+
+
+@router.post("/login")
+async def app_login(payload: LoginRequest, response: Response):
+    if not settings.APP_AUTH_PASSWORD_HASH:
+        raise HTTPException(500, "Application login is not configured")
+    if payload.login != settings.APP_AUTH_LOGIN:
+        raise HTTPException(401, "Invalid login or password")
+    if not verify_password(payload.password, settings.APP_AUTH_PASSWORD_HASH):
+        raise HTTPException(401, "Invalid login or password")
+
+    response.set_cookie(
+        value=create_session_token(payload.login),
+        **session_cookie_settings(),
+    )
+    return {"success": True, "login": payload.login}
+
+
+@router.post("/logout")
+async def app_logout(response: Response):
+    response.delete_cookie(session_cookie_settings()["key"], path="/")
+    return {"success": True}
+
+
 @router.get("/status", response_model=AuthStatus)
-async def auth_status(db: AsyncSession = Depends(get_db)):
+async def auth_status(
+    db: AsyncSession = Depends(get_db),
+    current_login: Optional[str] = Depends(require_authenticated_user),
+):
     result = await db.execute(select(AuthToken).where(AuthToken.provider == "codex"))
     codex = result.scalar_one_or_none()
     codex_ok = codex and codex.access_token and (
@@ -65,6 +111,9 @@ async def auth_status(db: AsyncSession = Depends(get_db)):
     deepseek = result.scalar_one_or_none()
 
     return AuthStatus(
+        authenticated=bool(current_login),
+        app_login_configured=bool(settings.APP_AUTH_PASSWORD_HASH),
+        app_login=settings.APP_AUTH_LOGIN if settings.APP_AUTH_PASSWORD_HASH else None,
         codex_connected=bool(codex_ok),
         deepseek_configured=bool((deepseek and deepseek.access_token) or settings.DEEPSEEK_API_KEY),
         bybit_configured=bool(settings.BYBIT_API_KEY and settings.BYBIT_API_SECRET),

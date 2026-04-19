@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 from loguru import logger
 import sys
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.config import settings
 from app.database import init_db, AsyncSessionLocal
+from app.security import get_authenticated_login_from_request, get_authenticated_login_from_websocket
 from app.websocket.manager import manager
 from app.models import BotSettings, TradingMode
 
@@ -81,6 +83,35 @@ app.add_middleware(CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+
+PUBLIC_HTTP_PATHS = {
+    "/health",
+    "/auth/login",
+    "/auth/session",
+}
+
+
+@app.middleware("http")
+async def auth_guard(request, call_next):
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path in PUBLIC_HTTP_PATHS
+        or path.startswith("/docs")
+        or path.startswith("/openapi")
+        or path.startswith("/redoc")
+        or path.startswith("/auth/codex/callback")
+    ):
+        return await call_next(request)
+
+    if not get_authenticated_login_from_request(request):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Authentication required"},
+        )
+
+    return await call_next(request)
+
 from app.api.routes import (
     auth, trading, orders, trades, journal, analytics,
     settings as settings_router, backtest, market,
@@ -98,6 +129,9 @@ app.include_router(market.router,          prefix="/market",    tags=["market"])
 
 @app.websocket("/ws/{client_id}")
 async def ws_named(websocket: WebSocket, client_id: str):
+    if not get_authenticated_login_from_websocket(websocket):
+        await websocket.close(code=1008)
+        return
     await manager.connect(websocket, client_id)
     try:
         while True:
@@ -109,6 +143,9 @@ async def ws_named(websocket: WebSocket, client_id: str):
 
 @app.websocket("/ws")
 async def ws_anon(websocket: WebSocket):
+    if not get_authenticated_login_from_websocket(websocket):
+        await websocket.close(code=1008)
+        return
     cid = str(uuid.uuid4())
     await manager.connect(websocket, cid)
     try:

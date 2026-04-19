@@ -4,12 +4,19 @@ import toast from 'react-hot-toast'
 const api = axios.create({
   baseURL: '/api',
   timeout: 60000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    if (err.response?.status === 401) {
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
+      }
+      return Promise.reject(err)
+    }
     const msg = err.response?.data?.detail || err.message || 'Request failed'
     toast.error(msg)
     return Promise.reject(err)
@@ -18,6 +25,9 @@ api.interceptors.response.use(
 
 // ─── AUTH ──────────────────────────────────────────────────
 export const authApi = {
+  session:          () => api.get('/auth/session'),
+  login:            (d: { login: string; password: string }) => api.post('/auth/login', d),
+  logout:           () => api.post('/auth/logout'),
   status:           () => api.get('/auth/status'),
   codexLoginUrl:    () => api.get('/auth/codex/login'),
   codexDisconnect:  () => api.delete('/auth/codex/disconnect'),

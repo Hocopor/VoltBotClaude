@@ -1,12 +1,13 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, BookOpen, BarChart3, ClipboardList,
-  Activity, FlaskConical, Settings, Wifi, WifiOff, Zap,
+  Activity, FlaskConical, Settings, WifiOff, Zap, LogOut,
 } from 'lucide-react'
 import { useStore } from '../../store'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import ModeSwitch from './ModeSwitch'
 import clsx from 'clsx'
+import { authApi } from '../../api'
 
 const NAV = [
   { to: '/',          label: 'Dashboard',  icon: LayoutDashboard },
@@ -19,8 +20,14 @@ const NAV = [
 ]
 
 export default function Layout() {
-  const { wsConnected, livePnl, mode } = useStore()
+  const { wsConnected, livePnl, mode, appLogin, clearAppSession } = useStore()
   useWebSocket()   // Connect WS globally
+
+  async function handleLogout() {
+    await authApi.logout().catch(() => {})
+    clearAppSession()
+    window.location.href = '/login'
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-voltage-bg">
@@ -73,6 +80,12 @@ export default function Layout() {
           <div className="text-[10px] text-voltage-muted font-mono">
             Mode: <span className="text-voltage-accent uppercase">{mode}</span>
           </div>
+          <div className="text-[10px] text-voltage-muted font-mono">
+            User: <span className="text-voltage-text">{appLogin || 'unknown'}</span>
+          </div>
+          <button onClick={handleLogout} className="btn-ghost w-full text-xs flex items-center justify-center gap-2">
+            <LogOut size={12} /> Sign Out
+          </button>
         </div>
       </aside>
 

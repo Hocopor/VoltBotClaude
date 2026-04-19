@@ -29,6 +29,10 @@ interface VoltageStore {
   setLivePnl: (p: { unrealized: number; today: number }) => void
 
   // Auth
+  authenticated: boolean
+  appLogin: string | null
+  setAppSession: (s: { authenticated: boolean; login: string | null }) => void
+  clearAppSession: () => void
   codexConnected: boolean
   deepseekConfigured: boolean
   bybitConfigured: boolean
@@ -56,6 +60,11 @@ export const useStore = create<VoltageStore>()(
 
       livePnl: { unrealized: 0, today: 0 },
       setLivePnl: (livePnl) => set({ livePnl }),
+
+      authenticated: false,
+      appLogin: null,
+      setAppSession: ({ authenticated, login }) => set({ authenticated, appLogin: login }),
+      clearAppSession: () => set({ authenticated: false, appLogin: null, wsConnected: false }),
 
       codexConnected: false,
       deepseekConfigured: false,

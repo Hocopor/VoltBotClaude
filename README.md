@@ -68,6 +68,8 @@ SECRET_KEY=<long-random-string>
 CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 ALLOWED_ORIGINS=https://your-subdomain.yourdomain.com
 APP_PORT=8088
+APP_AUTH_LOGIN=admin
+APP_AUTH_PASSWORD_HASH=<bcrypt-hash>
 ```
 
 Обычно также понадобятся:
@@ -79,6 +81,10 @@ DEEPSEEK_API_KEY=...
 OPENAI_CLIENT_ID=...
 OPENAI_CLIENT_SECRET=...
 OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callback
+```
+
+```bash
+python -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt'], deprecated='auto').hash('CHANGE_ME_PASSWORD'))"
 ```
 
 Примечания:
@@ -232,6 +238,10 @@ docker compose exec postgres psql -U voltage voltage
 - `OPENAI_REDIRECT_URI`
 - `CLOUDFLARE_TUNNEL_TOKEN`
 - `APP_PORT`
+- `APP_AUTH_LOGIN`
+- `APP_AUTH_PASSWORD_HASH`
+- `APP_AUTH_COOKIE_SECURE`
+- `APP_AUTH_SESSION_TTL_HOURS`
 - `ALLOWED_ORIGINS`
 - `LOG_LEVEL`
 
