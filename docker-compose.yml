@@ -13,10 +13,11 @@ services:
     networks:
       - voltage_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voltage}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voltage} -d ${POSTGRES_DB:-voltage} -h 127.0.0.1 || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 15s
 
   redis:
     image: redis:7-alpine
