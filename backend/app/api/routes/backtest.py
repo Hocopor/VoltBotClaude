@@ -7,10 +7,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, delete
+from sqlalchemy import select, desc, delete, func
 
 from app.database import get_db
-from app.models import BacktestSession, MarketType, Trade, Order, TradingMode
+from app.models import BacktestSession, MarketType, Trade, Order, TradingMode, JournalEntry
 from app.services.backtest_engine import backtest_engine
 
 router = APIRouter()
@@ -125,6 +125,15 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
     if not s:
         raise HTTPException(404, "Session not found")
 
+    trade_count_result = await db.execute(
+        select(func.count(Trade.id)).where(Trade.backtest_session_id == session_id)
+    )
+    journal_count_result = await db.execute(
+        select(func.count(JournalEntry.id))
+        .join(Trade, Trade.id == JournalEntry.trade_id)
+        .where(Trade.backtest_session_id == session_id)
+    )
+
     return {
         "id": s.id,
         "name": s.name,
@@ -145,6 +154,10 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
         "max_drawdown": s.max_drawdown,
         "total_pnl": s.total_pnl,
         "avg_rr": s.avg_rr,
+        "artifacts": {
+            "persisted_trades": trade_count_result.scalar() or 0,
+            "persisted_journal_entries": journal_count_result.scalar() or 0,
+        },
         "results_data": s.results_data,
         "created_at": s.created_at.isoformat(),
         "completed_at": s.completed_at.isoformat() if s.completed_at else None,
@@ -168,11 +181,9 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_db)):
     if not s:
         raise HTTPException(404, "Session not found")
 
-    await db.execute(
-        delete(Trade).where(
-            Trade.backtest_session_id == session_id
-        )
-    )
+    trade_ids_subquery = select(Trade.id).where(Trade.backtest_session_id == session_id)
+    await db.execute(delete(JournalEntry).where(JournalEntry.trade_id.in_(trade_ids_subquery)))
+    await db.execute(delete(Trade).where(Trade.backtest_session_id == session_id))
     await db.delete(s)
     await db.commit()
     return {"deleted": True}
@@ -181,9 +192,9 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_db)):
 @router.delete("/clear-all")
 async def clear_all_backtests(db: AsyncSession = Depends(get_db)):
     """Clear ALL backtest sessions and trades."""
-    await db.execute(
-        delete(Trade).where(Trade.mode == TradingMode.BACKTEST)
-    )
+    trade_ids_subquery = select(Trade.id).where(Trade.mode == TradingMode.BACKTEST)
+    await db.execute(delete(JournalEntry).where(JournalEntry.trade_id.in_(trade_ids_subquery)))
+    await db.execute(delete(Trade).where(Trade.mode == TradingMode.BACKTEST))
     await db.execute(delete(BacktestSession))
     await db.commit()
     return {"cleared": True}

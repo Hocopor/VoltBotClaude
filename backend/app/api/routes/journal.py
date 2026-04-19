@@ -25,6 +25,7 @@ async def get_journal(
     symbol: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    backtest_session_id: Optional[int] = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -42,6 +43,8 @@ async def get_journal(
     if date_to:
         dt = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
         q = q.where(JournalEntry.entry_time <= dt)
+    if backtest_session_id is not None:
+        q = q.join(Trade, Trade.id == JournalEntry.trade_id).where(Trade.backtest_session_id == backtest_session_id)
 
     q = q.order_by(desc(JournalEntry.entry_time)).limit(limit).offset(offset)
     result = await db.execute(q)

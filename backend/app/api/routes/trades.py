@@ -56,6 +56,7 @@ async def get_trades(
     symbol: Optional[str] = None,
     market_type: Optional[MarketType] = None,
     side: Optional[str] = None,
+    backtest_session_id: Optional[int] = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -76,6 +77,8 @@ async def get_trades(
             q = q.where(Trade.side == PositionSide(side))
         except ValueError:
             pass
+    if backtest_session_id is not None:
+        q = q.where(Trade.backtest_session_id == backtest_session_id)
 
     q = q.order_by(desc(Trade.entry_time)).limit(limit).offset(offset)
     result = await db.execute(q)

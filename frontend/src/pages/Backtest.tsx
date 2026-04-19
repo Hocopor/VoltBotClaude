@@ -223,6 +223,19 @@ export default function Backtest() {
                 ))}
               </div>
 
+              {selectedSession.artifacts && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="stat-card">
+                    <span className="stat-label">Persisted Trades</span>
+                    <span className="stat-value text-base">{selectedSession.artifacts.persisted_trades}</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Journal Entries</span>
+                    <span className="stat-value text-base">{selectedSession.artifacts.persisted_journal_entries}</span>
+                  </div>
+                </div>
+              )}
+
               {selectedSession.results_data?.macro_context?.btc_dominance_source && (
                 <div className="panel px-4 py-3 text-xs text-voltage-muted">
                   Macro context source:
