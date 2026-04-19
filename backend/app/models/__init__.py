@@ -76,6 +76,14 @@ class AISignal(str, enum.Enum):
     WAIT = "wait"
 
 
+def enum_column(enum_cls: type[enum.Enum], enum_name: str) -> SAEnum:
+    return SAEnum(
+        enum_cls,
+        name=enum_name,
+        values_callable=lambda members: [member.value for member in members],
+    )
+
+
 # ─────────────────────────────────────────────
 # SETTINGS
 # ─────────────────────────────────────────────
@@ -84,7 +92,7 @@ class BotSettings(Base):
     __tablename__ = "bot_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    mode: Mapped[TradingMode] = mapped_column(SAEnum(TradingMode), unique=True)
+    mode: Mapped[TradingMode] = mapped_column(enum_column(TradingMode, "tradingmode"), unique=True)
 
     # Active pairs (JSON list)
     spot_pairs: Mapped[dict] = mapped_column(JSON, default=list)
@@ -150,18 +158,18 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    mode: Mapped[TradingMode] = mapped_column(SAEnum(TradingMode), index=True)
-    market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType))
+    mode: Mapped[TradingMode] = mapped_column(enum_column(TradingMode, "tradingmode"), index=True)
+    market_type: Mapped[MarketType] = mapped_column(enum_column(MarketType, "markettype"))
 
     # Exchange data
     exchange_order_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     symbol: Mapped[str] = mapped_column(String(30), index=True)
 
     # Order details
-    side: Mapped[OrderSide] = mapped_column(SAEnum(OrderSide))
-    order_type: Mapped[OrderType] = mapped_column(SAEnum(OrderType))
-    status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus), default=OrderStatus.PENDING)
-    position_side: Mapped[PositionSide] = mapped_column(SAEnum(PositionSide), default=PositionSide.NONE)
+    side: Mapped[OrderSide] = mapped_column(enum_column(OrderSide, "orderside"))
+    order_type: Mapped[OrderType] = mapped_column(enum_column(OrderType, "ordertype"))
+    status: Mapped[OrderStatus] = mapped_column(enum_column(OrderStatus, "orderstatus"), default=OrderStatus.PENDING)
+    position_side: Mapped[PositionSide] = mapped_column(enum_column(PositionSide, "positionside"), default=PositionSide.NONE)
 
     # Prices & quantities
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -184,7 +192,7 @@ class Order(Base):
     filled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # AI context
-    ai_signal: Mapped[Optional[AISignal]] = mapped_column(SAEnum(AISignal), nullable=True)
+    ai_signal: Mapped[Optional[AISignal]] = mapped_column(enum_column(AISignal, "aisignal"), nullable=True)
     ai_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Backtest session
@@ -208,12 +216,12 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    mode: Mapped[TradingMode] = mapped_column(SAEnum(TradingMode), index=True)
-    market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType))
+    mode: Mapped[TradingMode] = mapped_column(enum_column(TradingMode, "tradingmode"), index=True)
+    market_type: Mapped[MarketType] = mapped_column(enum_column(MarketType, "markettype"))
 
     symbol: Mapped[str] = mapped_column(String(30), index=True)
-    side: Mapped[PositionSide] = mapped_column(SAEnum(PositionSide))
-    status: Mapped[TradeStatus] = mapped_column(SAEnum(TradeStatus), default=TradeStatus.OPEN)
+    side: Mapped[PositionSide] = mapped_column(enum_column(PositionSide, "positionside"))
+    status: Mapped[TradeStatus] = mapped_column(enum_column(TradeStatus, "tradestatus"), default=TradeStatus.OPEN)
 
     # Entry
     entry_price: Mapped[float] = mapped_column(Float)
@@ -246,7 +254,7 @@ class Trade(Base):
     leverage: Mapped[int] = mapped_column(Integer, default=1)
 
     # AI analysis
-    ai_signal: Mapped[Optional[AISignal]] = mapped_column(SAEnum(AISignal), nullable=True)
+    ai_signal: Mapped[Optional[AISignal]] = mapped_column(enum_column(AISignal, "aisignal"), nullable=True)
     ai_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     ai_analysis_entry: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_analysis_exit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -281,12 +289,12 @@ class JournalEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     trade_id: Mapped[int] = mapped_column(Integer, ForeignKey("trades.id"), unique=True)
-    mode: Mapped[TradingMode] = mapped_column(SAEnum(TradingMode), index=True)
+    mode: Mapped[TradingMode] = mapped_column(enum_column(TradingMode, "tradingmode"), index=True)
 
     # Trade reference data (denormalized for journal display)
     symbol: Mapped[str] = mapped_column(String(30))
-    market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType))
-    side: Mapped[PositionSide] = mapped_column(SAEnum(PositionSide))
+    market_type: Mapped[MarketType] = mapped_column(enum_column(MarketType, "markettype"))
+    side: Mapped[PositionSide] = mapped_column(enum_column(PositionSide, "positionside"))
     entry_price: Mapped[float] = mapped_column(Float)
     exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     stop_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -333,7 +341,7 @@ class BacktestSession(Base):
     name: Mapped[str] = mapped_column(String(100))
     symbol: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     symbols: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)   # list of symbols
-    market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType))
+    market_type: Mapped[MarketType] = mapped_column(enum_column(MarketType, "markettype"))
 
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -393,9 +401,9 @@ class AIAnalysisLog(Base):
     __tablename__ = "ai_analysis_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    mode: Mapped[TradingMode] = mapped_column(SAEnum(TradingMode), index=True)
+    mode: Mapped[TradingMode] = mapped_column(enum_column(TradingMode, "tradingmode"), index=True)
     symbol: Mapped[str] = mapped_column(String(30), index=True)
-    market_type: Mapped[MarketType] = mapped_column(SAEnum(MarketType))
+    market_type: Mapped[MarketType] = mapped_column(enum_column(MarketType, "markettype"))
 
     # Inputs
     filters_state: Mapped[dict] = mapped_column(JSON)
@@ -403,7 +411,7 @@ class AIAnalysisLog(Base):
     market_context: Mapped[dict] = mapped_column(JSON)
 
     # AI outputs
-    signal: Mapped[AISignal] = mapped_column(SAEnum(AISignal))
+    signal: Mapped[AISignal] = mapped_column(enum_column(AISignal, "aisignal"))
     confidence: Mapped[float] = mapped_column(Float)
     reasoning: Mapped[str] = mapped_column(Text)
     suggested_entry: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
