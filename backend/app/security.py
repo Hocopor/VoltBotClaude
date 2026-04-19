@@ -6,22 +6,28 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Optional
 
+import bcrypt
 from fastapi import Cookie, HTTPException, Request, WebSocket, status
-from passlib.context import CryptContext
 
 from app.config import settings
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SESSION_COOKIE_NAME = "voltage_session"
+MAX_BCRYPT_PASSWORD_BYTES = 72
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_BCRYPT_PASSWORD_BYTES:
+        raise ValueError("Password must be 72 bytes or fewer for bcrypt")
+    return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_BCRYPT_PASSWORD_BYTES:
+        return False
+    return bcrypt.checkpw(password_bytes, password_hash.encode("utf-8"))
 
 
 def _session_secret() -> bytes:

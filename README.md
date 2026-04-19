@@ -84,7 +84,7 @@ OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callbac
 ```
 
 ```bash
-python -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt'], deprecated='auto').hash('CHANGE_ME_PASSWORD'))"
+docker compose exec backend python -c "from app.security import hash_password; print(hash_password('CHANGE_ME_PASSWORD'))"
 ```
 
 Примечания:
