@@ -1,11 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { backtestApi, marketApi } from '../api'
-import { format } from 'date-fns'
-import { Play, Trash2, StopCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Play, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 
 function formatProfitFactor(value: number | null | undefined, totalPnl?: number, losingTrades?: number) {
   if (value == null && (totalPnl ?? 0) > 0 && (losingTrades ?? 0) === 0) return '∞'
@@ -15,8 +14,9 @@ function formatProfitFactor(value: number | null | undefined, totalPnl?: number,
 export default function Backtest() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [selectedSession, setSelectedSession] = useState<any>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [expandedResult, setExpandedResult] = useState(false)
+  const [expandedDecisionLog, setExpandedDecisionLog] = useState(false)
   const [form, setForm] = useState({
     name: 'VOLTAGE Backtest',
     market_type: 'spot',
@@ -42,6 +42,13 @@ export default function Backtest() {
     refetchInterval: 5_000,
   })
 
+  const { data: selectedSession } = useQuery({
+    queryKey: ['backtest-session', selectedSessionId],
+    queryFn: () => backtestApi.session(selectedSessionId as number).then(r => r.data),
+    enabled: selectedSessionId != null,
+    refetchInterval: selectedSessionId != null ? 5_000 : false,
+  })
+
   const startMut = useMutation({
     mutationFn: (d: any) => backtestApi.start(d),
     onSuccess: (r) => {
@@ -58,7 +65,11 @@ export default function Backtest() {
 
   const clearMut = useMutation({
     mutationFn: () => backtestApi.clearAll(),
-    onSuccess: () => { toast('All cleared'); qc.invalidateQueries({ queryKey: ['backtest-sessions'] }); setSelectedSession(null) },
+    onSuccess: () => {
+      toast('All cleared')
+      qc.invalidateQueries({ queryKey: ['backtest-sessions'] })
+      setSelectedSessionId(null)
+    },
   })
 
   function togglePair(p: string) {
@@ -148,10 +159,10 @@ export default function Backtest() {
             {(sessions || []).map((s: any) => (
               <button
                 key={s.id}
-                onClick={() => setSelectedSession(s)}
+                onClick={() => setSelectedSessionId(s.id)}
                 className={clsx(
                   'w-full px-4 py-3 border-b border-voltage-border/50 text-left hover:bg-voltage-hover/30 transition-all',
-                  selectedSession?.id === s.id && 'bg-voltage-hover border-l-2 border-l-voltage-accent'
+                  selectedSessionId === s.id && 'bg-voltage-hover border-l-2 border-l-voltage-accent'
                 )}
               >
                 <div className="flex justify-between items-start">
@@ -212,6 +223,29 @@ export default function Backtest() {
                 ))}
               </div>
 
+              {selectedSession.results_data?.macro_context?.btc_dominance_source && (
+                <div className="panel px-4 py-3 text-xs text-voltage-muted">
+                  Macro context source:
+                  <span className="ml-2 font-mono text-voltage-accent">
+                    {selectedSession.results_data.macro_context.btc_dominance_source}
+                  </span>
+                </div>
+              )}
+
+              {selectedSession.results_data?.decision_stats && (
+                <div className="panel p-4">
+                  <h3 className="text-sm font-semibold mb-3 text-voltage-muted uppercase tracking-wider">Decision Flow Summary</h3>
+                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    {Object.entries(selectedSession.results_data.decision_stats).map(([reason, count]) => (
+                      <div key={reason} className="stat-card">
+                        <span className="stat-label">{reason}</span>
+                        <span className="stat-value text-base">{count as number}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Equity Curve */}
               {selectedSession.results_data?.equity_curve?.length > 0 && (
                 <div className="panel p-4">
@@ -249,7 +283,7 @@ export default function Backtest() {
                       <table className="w-full text-xs font-mono">
                         <thead>
                           <tr className="text-voltage-muted border-b border-voltage-border">
-                            {['Symbol','Side','Entry','Exit','Entry Time','Exit Time','PnL','Reason'].map(h => (
+                            {['Symbol','Side','Entry','Exit','PnL','Conf.','Scenario','F&G','BTC.D','Reason'].map(h => (
                               <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -263,12 +297,62 @@ export default function Backtest() {
                               </td>
                               <td className="px-3 py-1.5">{t.entry?.toFixed(4)}</td>
                               <td className="px-3 py-1.5">{t.exit?.toFixed(4) ?? '—'}</td>
-                              <td className="px-3 py-1.5 text-voltage-muted">{t.entry_time?.slice(0,16)}</td>
-                              <td className="px-3 py-1.5 text-voltage-muted">{t.exit_time?.slice(0,16) ?? '—'}</td>
                               <td className={`px-3 py-1.5 font-bold ${t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
                                 {t.pnl >= 0 ? '+' : ''}{t.pnl?.toFixed(4)}
                               </td>
+                              <td className="px-3 py-1.5 text-voltage-muted">
+                                {t.confidence != null ? `${(t.confidence * 100).toFixed(0)}%` : '—'}
+                              </td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{t.scenario ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{t.fear_greed ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">
+                                {t.btc_dominance != null ? t.btc_dominance.toFixed(2) : '—'}
+                              </td>
                               <td className="px-3 py-1.5 text-voltage-muted">{t.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {selectedSession.results_data?.decision_log?.length > 0 && (
+                <div className="panel overflow-hidden">
+                  <button
+                    className="w-full flex items-center gap-2 px-4 py-3 border-b border-voltage-border text-sm font-semibold text-left"
+                    onClick={() => setExpandedDecisionLog(v => !v)}
+                  >
+                    {expandedDecisionLog ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    Decision Trail Samples ({selectedSession.results_data.decision_log.length})
+                  </button>
+                  {expandedDecisionLog && (
+                    <div className="overflow-x-auto max-h-96">
+                      <table className="w-full text-xs font-mono">
+                        <thead>
+                          <tr className="text-voltage-muted border-b border-voltage-border">
+                            {['Time','Symbol','Reason','Signal','Conf.','Filters','Scenario','F&G','BTC.D'].map(h => (
+                              <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedSession.results_data.decision_log.map((d: any, i: number) => (
+                            <tr key={i} className="border-b border-voltage-border/30 hover:bg-voltage-hover/10">
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.time?.slice(0,16)}</td>
+                              <td className="px-3 py-1.5 text-voltage-text">{d.symbol}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.reason}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.signal ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">
+                                {d.confidence != null ? `${(d.confidence * 100).toFixed(0)}%` : '—'}
+                              </td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.filters_passed ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.scenario ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{d.fear_greed ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">
+                                {d.btc_dominance != null ? d.btc_dominance.toFixed(2) : '—'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

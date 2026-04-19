@@ -69,6 +69,8 @@ class BacktestEngine:
 
         try:
             all_trades: list[dict] = []
+            all_decisions: list[dict] = []
+            decision_stats: dict[str, int] = {}
             balance = initial_balance
             equity_curve = [{"time": start_date.isoformat(), "equity": balance}]
             total = len(symbols)
@@ -84,7 +86,7 @@ class BacktestEngine:
                     logger.warning(f"Insufficient data for {symbol}")
                     continue
 
-                sym_trades = await self._simulate_symbol(
+                simulation = await self._simulate_symbol(
                     symbol=symbol,
                     market_type=market_type,
                     klines_map=klines_map,
@@ -97,6 +99,7 @@ class BacktestEngine:
                     leverage=leverage,
                     session_id=session_id,
                 )
+                sym_trades = simulation["trades"]
 
                 await self._persist_backtest_trades(
                     symbol=symbol,
@@ -111,6 +114,9 @@ class BacktestEngine:
                     equity_curve.append({"time": t["exit_time"] or "", "equity": round(balance, 2)})
 
                 all_trades.extend(sym_trades)
+                all_decisions.extend(simulation["decisions"])
+                for reason, count in simulation["decision_stats"].items():
+                    decision_stats[reason] = decision_stats.get(reason, 0) + count
 
                 progress = (idx + 1) / total
                 async with AsyncSessionLocal() as db:
@@ -144,6 +150,8 @@ class BacktestEngine:
                         "macro_context": {
                             "btc_dominance_source": macro_context.get("btc_dominance_source"),
                         },
+                        "decision_stats": decision_stats,
+                        "decision_log": all_decisions[:1000],
                         "trades_summary": [self._summary(t) for t in all_trades[:500]],
                     }
                     s.completed_at = datetime.now(timezone.utc)
@@ -221,8 +229,10 @@ class BacktestEngine:
         conf_threshold: float,
         leverage: int,
         session_id: int,
-    ) -> list[dict]:
+    ) -> dict[str, list[dict] | dict[str, int]]:
         trades: list[dict] = []
+        decisions: list[dict] = []
+        decision_stats: dict[str, int] = {}
         h4 = klines_map["4H"]
         is_major = symbol.replace("USDT", "") in {"BTC", "ETH"}
         strategy = VoltageStrategy(symbol, is_major=is_major)
@@ -297,16 +307,29 @@ class BacktestEngine:
                 market_data=market_data,
             )
 
-            if (
-                ai_result["signal"] in [Signal.LONG.value, Signal.SHORT.value]
-                and ai_result["confidence"] >= conf_threshold
-                and strategy_signal.filters_passed >= 4
-                and ai_result.get("entry_price")
-                and ai_result.get("stop_loss")
-            ):
+            reason = self._decision_reason(
+                ai_result=ai_result,
+                strategy_signal=strategy_signal,
+                conf_threshold=conf_threshold,
+            )
+            self._record_decision(
+                decisions=decisions,
+                decision_stats=decision_stats,
+                symbol=symbol,
+                timestamp_ms=ts,
+                price=current_close,
+                ai_result=ai_result,
+                strategy_signal=strategy_signal,
+                reason=reason,
+                fear_greed=current_fear_greed,
+                btc_dominance=current_btc_dominance,
+            )
+
+            if reason == "trade_opened":
                 risk_amount = balance * (risk_pct / 100)
                 risk_per_unit = abs(ai_result["entry_price"] - ai_result["stop_loss"])
                 if risk_per_unit < 1e-10:
+                    decision_stats["risk_per_unit_zero"] = decision_stats.get("risk_per_unit_zero", 0) + 1
                     continue
                 qty = (risk_amount * leverage) / risk_per_unit
 
@@ -330,6 +353,8 @@ class BacktestEngine:
                     "ai_confidence": ai_result.get("ai_confidence", strategy_signal.confidence),
                     "filters_passed": strategy_signal.filters_passed,
                     "reasoning": ai_result.get("reasoning", ""),
+                    "filters_assessment": ai_result.get("filters_assessment", {}),
+                    "voltage_filters": ai_result.get("voltage_filters", {}),
                     "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
                     "fear_greed": current_fear_greed,
                     "btc_dominance": current_btc_dominance,
@@ -346,7 +371,61 @@ class BacktestEngine:
             open_trade = self._force_close(open_trade, last_price, last_ts)
             trades.append(open_trade)
 
-        return trades
+        return {
+            "trades": trades,
+            "decisions": decisions,
+            "decision_stats": decision_stats,
+        }
+
+    def _decision_reason(self, ai_result: dict, strategy_signal, conf_threshold: float) -> str:
+        signal = ai_result.get("signal")
+        if signal not in [Signal.LONG.value, Signal.SHORT.value]:
+            return "signal_not_actionable"
+        if ai_result.get("confidence", 0.0) < conf_threshold:
+            return "confidence_below_threshold"
+        if strategy_signal.filters_passed < 4:
+            return "filters_below_minimum"
+        if not ai_result.get("entry_price") or not ai_result.get("stop_loss"):
+            return "missing_entry_or_stop_loss"
+        return "trade_opened"
+
+    def _record_decision(
+        self,
+        *,
+        decisions: list[dict],
+        decision_stats: dict[str, int],
+        symbol: str,
+        timestamp_ms: int,
+        price: float,
+        ai_result: dict,
+        strategy_signal,
+        reason: str,
+        fear_greed: int,
+        btc_dominance: float,
+    ) -> None:
+        decision_stats[reason] = decision_stats.get(reason, 0) + 1
+        if len(decisions) >= 1000:
+            return
+
+        decisions.append(
+            {
+                "symbol": symbol,
+                "time": datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat(),
+                "price": round(price, 6),
+                "reason": reason,
+                "signal": ai_result.get("signal"),
+                "confidence": ai_result.get("confidence"),
+                "strategy_confidence": ai_result.get("strategy_confidence", strategy_signal.confidence),
+                "ai_confidence": ai_result.get("ai_confidence", strategy_signal.confidence),
+                "filters_passed": strategy_signal.filters_passed,
+                "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
+                "fear_greed": fear_greed,
+                "btc_dominance": round(btc_dominance, 4),
+                "entry_price": ai_result.get("entry_price"),
+                "stop_loss": ai_result.get("stop_loss"),
+                "reasoning": ai_result.get("reasoning", "")[:1000],
+            }
+        )
 
     def _check_exit(self, trade: dict, bar: pd.Series) -> Optional[dict]:
         """Check bar high/low against SL and TP levels. Mutates trade dict for partials."""
@@ -524,6 +603,8 @@ class BacktestEngine:
             "fear_greed": t.get("fear_greed"),
             "btc_dominance": t.get("btc_dominance"),
             "reasoning": t.get("reasoning"),
+            "filters_assessment": t.get("filters_assessment"),
+            "voltage_filters": t.get("voltage_filters"),
         }
 
     def stop_session(self, session_id: int):
@@ -581,11 +662,9 @@ class BacktestEngine:
                         "scenario": item.get("scenario"),
                         "fear_greed": item.get("fear_greed"),
                         "btc_dominance": item.get("btc_dominance"),
+                        "filters_assessment": item.get("filters_assessment", {}),
                     },
-                    voltage_filters={
-                        "filters_passed": item.get("filters_passed", 0),
-                        "scenario": item.get("scenario"),
-                    },
+                    voltage_filters=item.get("voltage_filters", {}),
                     backtest_session_id=session_id,
                 )
                 db.add(trade)
