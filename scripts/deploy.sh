@@ -85,7 +85,15 @@ docker compose build --parallel
 
 echo ""
 echo "Starting services..."
-docker compose up -d --remove-orphans
+if ! docker compose up -d --remove-orphans; then
+    echo ""
+    echo "docker compose up failed. Recent container state:"
+    docker compose ps || true
+    echo ""
+    echo "Recent postgres/backend/nginx/cloudflared logs:"
+    docker compose logs postgres backend nginx cloudflared --tail 80 || true
+    exit 1
+fi
 
 echo ""
 echo "Waiting for application health at $HEALTH_URL ..."
