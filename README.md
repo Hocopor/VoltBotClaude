@@ -101,6 +101,7 @@ sudo bash scripts/deploy.sh
 - собирает образы
 - поднимает `postgres`, `redis`, `backend`, `frontend`, `nginx`, `cloudflared`
 - ждёт успешный ответ от `http://127.0.0.1:${APP_PORT}/health`
+- пишет полный лог в `logs/deploy/`
 
 ### 4. Проверить, что origin жив
 
@@ -156,6 +157,7 @@ bash scripts/update.sh
 - пересобирает образы без кэша
 - поднимает контейнеры заново
 - ждёт успешный healthcheck
+- пишет полный лог в `logs/deploy/`
 
 ## Полезные команды
 
@@ -169,6 +171,14 @@ docker compose ps
 
 ```bash
 docker compose logs -f backend nginx cloudflared
+```
+
+Логи deploy/update-скриптов:
+
+```bash
+ls -lah logs/deploy
+tail -n 200 logs/deploy/deploy-*.log
+tail -n 200 logs/deploy/update-*.log
 ```
 
 Проверка health:

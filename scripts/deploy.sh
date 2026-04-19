@@ -3,10 +3,30 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
+LOG_DIR="$REPO_DIR/logs/deploy"
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="$LOG_DIR/deploy-$TIMESTAMP.log"
+
+init_logging() {
+    if [ "${VOLTAGE_LOGGING_INITIALIZED:-0}" = "1" ]; then
+        return
+    fi
+
+    mkdir -p "$LOG_DIR"
+    touch "$LOG_FILE"
+    export VOLTAGE_LOGGING_INITIALIZED=1
+    exec > >(tee -a "$LOG_FILE") 2>&1
+}
+
+init_logging
+
+trap 'status=$?; echo ""; if [ "$status" -eq 0 ]; then echo "Log saved to: $LOG_FILE"; else echo "Script failed with exit code $status"; echo "Full log: $LOG_FILE"; fi' EXIT
 
 echo ""
 echo "VOLTAGE Trading Bot deployment"
 echo "================================"
+echo ""
+echo "Log file: $LOG_FILE"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -93,6 +113,7 @@ echo ""
 echo "Deployment completed."
 echo "Local origin: $HEALTH_URL"
 echo "Cloudflare Tunnel container: voltage_cloudflared"
+echo "Full log: $LOG_FILE"
 echo ""
 echo "Cloudflare dashboard note:"
 echo "Configure the public hostname to route to http://nginx:80"
