@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     BYBIT_API_KEY: str = ""
     BYBIT_API_SECRET: str = ""
     BYBIT_TESTNET: bool = False
+    BYBIT_REQUEST_TIMEOUT: int = 20
 
     # DeepSeek AI
     DEEPSEEK_API_KEY: str = ""

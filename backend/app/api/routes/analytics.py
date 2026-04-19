@@ -1,6 +1,7 @@
 """
 Analytics Routes — Deep trading performance analysis
 """
+import math
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query
@@ -11,6 +12,12 @@ from app.database import get_db
 from app.models import Trade, JournalEntry, TradingMode, TradeStatus, PositionSide, MarketType
 
 router = APIRouter()
+
+
+def _safe_number(value: float) -> Optional[float]:
+    if not math.isfinite(value):
+        return None
+    return value
 
 
 @router.get("/overview/{mode}")
@@ -91,7 +98,7 @@ async def analytics_overview(mode: TradingMode, db: AsyncSession = Depends(get_d
         "winning_trades": len(wins),
         "losing_trades": len(losses),
         "win_rate": round(len(wins) / len(trades) * 100, 2),
-        "profit_factor": pf,
+        "profit_factor": _safe_number(pf),
         "total_pnl": round(sum(t.net_pnl for t in trades), 4),
         "gross_profit": round(gross_profit, 4),
         "gross_loss": round(gross_loss, 4),

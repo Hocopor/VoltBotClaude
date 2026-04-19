@@ -7,6 +7,11 @@ import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
 
+function formatProfitFactor(value: number | null | undefined, totalPnl?: number, losingTrades?: number) {
+  if (value == null && (totalPnl ?? 0) > 0 && (losingTrades ?? 0) === 0) return '∞'
+  return value?.toFixed(2) ?? '—'
+}
+
 export default function Backtest() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
@@ -28,6 +33,7 @@ export default function Backtest() {
   const { data: pairs } = useQuery({
     queryKey: ['backtest-pairs', form.market_type],
     queryFn: () => (form.market_type === 'spot' ? marketApi.spotPairs() : marketApi.futuresPairs()).then(r => r.data.pairs),
+    enabled: showForm,
   })
 
   const { data: sessions } = useQuery({
@@ -194,7 +200,7 @@ export default function Backtest() {
                 {[
                   ['Total Trades', selectedSession.total_trades],
                   ['Win Rate', `${selectedSession.win_rate?.toFixed(1)}%`],
-                  ['Profit Factor', selectedSession.profit_factor === Infinity ? '∞' : selectedSession.profit_factor?.toFixed(2)],
+                  ['Profit Factor', formatProfitFactor(selectedSession.profit_factor, selectedSession.total_pnl, selectedSession.losing_trades)],
                   ['Max Drawdown', `${selectedSession.max_drawdown?.toFixed(1)}%`],
                   ['ROI', `${((selectedSession.final_balance - selectedSession.initial_balance) / selectedSession.initial_balance * 100).toFixed(1)}%`],
                   ['Net PnL', `${selectedSession.total_pnl >= 0 ? '+' : ''}${selectedSession.total_pnl?.toFixed(2)}`],

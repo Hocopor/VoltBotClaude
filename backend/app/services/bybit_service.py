@@ -40,7 +40,15 @@ class BybitService:
     async def _call(self, fn, **kwargs) -> dict:
         """Run a blocking pybit call in the thread pool."""
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, lambda: fn(**kwargs))
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: fn(**kwargs)),
+                timeout=settings.BYBIT_REQUEST_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"Bybit request timed out after {settings.BYBIT_REQUEST_TIMEOUT}s"
+            ) from exc
         if result.get("retCode", -1) != 0:
             msg = result.get("retMsg", "Unknown Bybit error")
             raise RuntimeError(f"Bybit API error: {msg} | {result}")

@@ -1,6 +1,7 @@
 """
 Backtest Routes — Historical simulation management
 """
+import math
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -13,6 +14,14 @@ from app.models import BacktestSession, MarketType, Trade, Order, TradingMode
 from app.services.backtest_engine import backtest_engine
 
 router = APIRouter()
+
+
+def _safe_number(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 class BacktestCreate(BaseModel):
@@ -95,7 +104,7 @@ async def get_sessions(db: AsyncSession = Depends(get_db)):
                 "progress": s.progress,
                 "total_trades": s.total_trades,
                 "win_rate": s.win_rate,
-                "profit_factor": s.profit_factor,
+                "profit_factor": _safe_number(s.profit_factor),
                 "max_drawdown": s.max_drawdown,
                 "total_pnl": s.total_pnl,
                 "created_at": s.created_at.isoformat(),
@@ -132,7 +141,7 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
         "winning_trades": s.winning_trades,
         "losing_trades": s.losing_trades,
         "win_rate": s.win_rate,
-        "profit_factor": s.profit_factor,
+        "profit_factor": _safe_number(s.profit_factor),
         "max_drawdown": s.max_drawdown,
         "total_pnl": s.total_pnl,
         "avg_rr": s.avg_rr,

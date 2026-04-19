@@ -8,6 +8,11 @@ import {
 
 const COLORS = { profit: '#00d395', loss: '#f6465d', neutral: '#f0b90b', blue: '#3b82f6' }
 
+function formatProfitFactor(value: number | null | undefined, totalPnl?: number, losingTrades?: number) {
+  if (value == null && (totalPnl ?? 0) > 0 && (losingTrades ?? 0) === 0) return '∞'
+  return value?.toFixed(2) ?? '—'
+}
+
 function StatCard({ label, value, sub, color }: any) {
   return (
     <div className="stat-card">
@@ -82,7 +87,12 @@ export default function Analytics() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard label="Total Trades" value={ov.total_trades} />
         <StatCard label="Win Rate" value={`${ov.win_rate?.toFixed(1)}%`} color={ov.win_rate >= 58 ? COLORS.profit : COLORS.loss} sub="Target ≥58%" />
-        <StatCard label="Profit Factor" value={ov.profit_factor === Infinity ? '∞' : ov.profit_factor?.toFixed(2)} color={ov.profit_factor >= 2.2 ? COLORS.profit : COLORS.loss} sub="Target ≥2.2" />
+        <StatCard
+          label="Profit Factor"
+          value={formatProfitFactor(ov.profit_factor, ov.total_pnl, ov.losing_trades)}
+          color={(ov.profit_factor ?? 0) >= 2.2 ? COLORS.profit : COLORS.loss}
+          sub="Target ≥2.2"
+        />
         <StatCard label="Max Drawdown" value={`${ov.max_drawdown_pct?.toFixed(1)}%`} color={ov.max_drawdown_pct <= 18 ? COLORS.profit : COLORS.loss} sub="Limit 18%" />
         <StatCard label="Total PnL" value={`${ov.total_pnl >= 0 ? '+' : ''}${ov.total_pnl?.toFixed(2)}`} color={ov.total_pnl >= 0 ? COLORS.profit : COLORS.loss} sub="USDT" />
         <StatCard label="Avg Hold" value={`${ov.avg_hold_hours?.toFixed(1)}h`} sub="per trade" />
