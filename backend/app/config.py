@@ -1,7 +1,7 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
 from typing import List
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = "INFO"
+
+    # Runtime files
+    ENV_FILE_PATH: str = "/run/config/voltage.env"
 
     @property
     def allowed_origins_list(self) -> List[str]:

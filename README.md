@@ -65,8 +65,11 @@ BYBIT_API_SECRET=your_secret
 # DeepSeek AI
 DEEPSEEK_API_KEY=sk-...
 
-# Cloudflare Tunnel (for remote access via your domain)
+# Cloudflare Tunnel (required for remote access via your domain)
 CLOUDFLARE_TUNNEL_TOKEN=your_tunnel_token
+
+# Local loopback port for the nginx origin
+APP_PORT=8088
 
 # Your public domain
 ALLOWED_ORIGINS=https://trading.yourdomain.com
@@ -84,7 +87,7 @@ The script will:
 - Build all containers
 - Start the full stack
 - Run DB migrations
-- Configure Cloudflare Tunnel
+- Start Cloudflare Tunnel inside Docker
 
 ---
 
@@ -93,9 +96,18 @@ The script will:
 1. Go to **Cloudflare Zero Trust → Networks → Tunnels**
 2. Create a tunnel → copy the token
 3. Set in `.env`: `CLOUDFLARE_TUNNEL_TOKEN=your_token`
-4. In Cloudflare dashboard, add a Public Hostname:
+4. Run the stack so the `cloudflared` container joins the Docker network
+5. In Cloudflare dashboard, add a Public Hostname:
    - Subdomain: `trading` (or whatever you prefer)
-   - Service: `http://localhost:80`
+   - Service: `http://nginx:80`
+
+Why `http://nginx:80` and not `localhost`:
+- `cloudflared` runs inside Docker in this project
+- it must reach the origin through the Docker network by service name
+
+Local origin checks:
+- App health: `http://127.0.0.1:8088/health`
+- Frontend/API origin: `http://127.0.0.1:8088`
 
 ---
 
@@ -170,7 +182,7 @@ engine.status      → Engine started/stopped
 
 ```bash
 # View logs
-docker compose logs -f backend
+docker compose logs -f backend nginx cloudflared
 
 # Restart backend only
 docker compose restart backend
@@ -196,6 +208,7 @@ docker compose exec postgres pg_dump -U voltage voltage > backup_$(date +%Y%m%d)
 - All secrets are in `.env` — never commit it to git
 - Bybit API keys should have **trading permissions only** — no withdrawal
 - The app runs as a non-root user inside Docker
+- Nginx binds only to `127.0.0.1:${APP_PORT}` on the host; public traffic should come through Cloudflare Tunnel
 
 ---
 

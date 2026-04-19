@@ -24,12 +24,18 @@ class BybitService:
     LINEAR = "linear"  # USDT-margined futures
 
     def __init__(self):
+        self._configure_client(settings.BYBIT_API_KEY, settings.BYBIT_API_SECRET)
+        self._loop = None
+
+    def _configure_client(self, api_key: str, api_secret: str) -> None:
         self.client = HTTP(
             testnet=settings.BYBIT_TESTNET,
-            api_key=settings.BYBIT_API_KEY,
-            api_secret=settings.BYBIT_API_SECRET,
+            api_key=api_key,
+            api_secret=api_secret,
         )
-        self._loop = None
+
+    def reload_credentials(self, api_key: str, api_secret: str) -> None:
+        self._configure_client(api_key, api_secret)
 
     async def _call(self, fn, **kwargs) -> dict:
         """Run a blocking pybit call in the thread pool."""
