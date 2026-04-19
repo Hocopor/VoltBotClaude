@@ -91,6 +91,109 @@ The script will:
 
 ---
 
+## Server Deploy Guide
+
+### 1. Prepare the server
+
+Install Git and clone the project:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+git clone <your-repo> voltage-bot
+cd voltage-bot
+```
+
+### 2. Create and fill `.env`
+
+Create the production env file from the template:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Required values:
+- `POSTGRES_PASSWORD`
+- `REDIS_PASSWORD`
+- `SECRET_KEY`
+- `CLOUDFLARE_TUNNEL_TOKEN`
+- `ALLOWED_ORIGINS=https://your-subdomain.yourdomain.com`
+- `APP_PORT=8088` or another free local loopback port
+
+Optional but usually needed for full functionality:
+- `BYBIT_API_KEY`
+- `BYBIT_API_SECRET`
+- `DEEPSEEK_API_KEY`
+- `OPENAI_CLIENT_ID`
+- `OPENAI_CLIENT_SECRET`
+- `OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callback`
+
+### 3. Run the deployment
+
+```bash
+chmod +x scripts/deploy.sh scripts/update.sh
+sudo bash scripts/deploy.sh
+```
+
+What the script does:
+- installs Docker if it is missing
+- checks Docker Compose
+- builds the images
+- starts `postgres`, `redis`, `backend`, `frontend`, `nginx`, and `cloudflared`
+- waits for `http://127.0.0.1:${APP_PORT}/health`
+
+### 4. Verify local origin health
+
+Check that nginx and backend are reachable locally:
+
+```bash
+curl http://127.0.0.1:8088/health
+docker compose ps
+docker compose logs --tail 50 backend nginx cloudflared
+```
+
+If you use a different `APP_PORT`, replace `8088` in the command.
+
+### 5. Configure Cloudflare hostname
+
+In Cloudflare Zero Trust:
+1. Open **Networks → Tunnels**
+2. Open the tunnel that matches your token
+3. Add a **Public Hostname**
+4. Set your subdomain, for example `trading.yourdomain.com`
+5. Set the service target to `http://nginx:80`
+
+Important:
+- do not point the tunnel to `localhost:80`
+- the tunnel runs inside Docker and must reach nginx by Docker service name
+
+### 6. Open the application
+
+After the hostname is attached to the tunnel, open:
+
+```text
+https://your-subdomain.yourdomain.com
+```
+
+### 7. Updating the deployment
+
+```bash
+bash scripts/update.sh
+```
+
+### 8. Useful troubleshooting commands
+
+```bash
+docker compose ps
+docker compose logs -f backend nginx cloudflared
+curl http://127.0.0.1:8088/health
+docker compose restart backend
+docker compose restart cloudflared
+```
+
+---
+
 ## Cloudflare Tunnel Setup
 
 1. Go to **Cloudflare Zero Trust → Networks → Tunnels**
