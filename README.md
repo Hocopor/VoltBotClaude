@@ -83,6 +83,14 @@ OPENAI_CLIENT_SECRET=...
 OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callback
 ```
 
+Важно:
+
+- `BYBIT_API_KEY`, `BYBIT_API_SECRET` и `DEEPSEEK_API_KEY` задаются только в серверном `.env`
+- веб-интерфейс не должен быть источником правды для боевых API-ключей
+- UI используется для настроек режима и поведения, а не для хранения production-секретов
+- для полноценного исторического `BTC dominance` в backtest можно дополнительно задать `COINMARKETCAP_API_KEY`
+- без `COINMARKETCAP_API_KEY` backtest использует реальный исторический `Fear & Greed` и прозрачный fallback для `BTC dominance`
+
 ```bash
 docker compose exec backend python -c "from app.security import hash_password; print(hash_password('CHANGE_ME_PASSWORD'))"
 ```

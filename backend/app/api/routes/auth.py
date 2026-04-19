@@ -1,14 +1,12 @@
-"""Auth routes for app login, Codex OAuth, and API key management."""
+"""Auth routes for app login and Codex OAuth."""
 
 import secrets
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +15,6 @@ from app.config import settings
 from app.database import AsyncSessionLocal, get_db
 from app.models import AuthToken
 from app.services.ai_service import ai_service
-from app.services.bybit_service import bybit_service
 from app.security import (
     create_session_token,
     get_authenticated_login_from_request,
@@ -28,12 +25,6 @@ from app.security import (
 
 router = APIRouter()
 _oauth_state: dict[str, str] = {}
-
-
-class APIKeysUpdate(BaseModel):
-    bybit_api_key: str = ""
-    bybit_api_secret: str = ""
-    deepseek_api_key: Optional[str] = None
 
 
 class AuthStatus(BaseModel):
@@ -49,23 +40,6 @@ class AuthStatus(BaseModel):
 class LoginRequest(BaseModel):
     login: str
     password: str
-
-
-def _write_env_updates(path_str: str, updates: dict[str, str]) -> None:
-    path = Path(path_str)
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
-    lines = content.splitlines()
-
-    for key, value in updates.items():
-        replacement = f"{key}={value}"
-        for index, line in enumerate(lines):
-            if line.startswith(f"{key}="):
-                lines[index] = replacement
-                break
-        else:
-            lines.append(replacement)
-
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 @router.get("/session")
@@ -107,15 +81,12 @@ async def auth_status(
         not codex.expires_at or codex.expires_at > datetime.now(timezone.utc)
     )
 
-    result = await db.execute(select(AuthToken).where(AuthToken.provider == "deepseek"))
-    deepseek = result.scalar_one_or_none()
-
     return AuthStatus(
         authenticated=bool(current_login),
         app_login_configured=bool(settings.APP_AUTH_PASSWORD_HASH),
         app_login=settings.APP_AUTH_LOGIN if settings.APP_AUTH_PASSWORD_HASH else None,
         codex_connected=bool(codex_ok),
-        deepseek_configured=bool((deepseek and deepseek.access_token) or settings.DEEPSEEK_API_KEY),
+        deepseek_configured=bool(settings.DEEPSEEK_API_KEY),
         bybit_configured=bool(settings.BYBIT_API_KEY and settings.BYBIT_API_SECRET),
         codex_expires_at=codex.expires_at.isoformat() if codex and codex.expires_at else None,
     )
@@ -200,36 +171,13 @@ async def codex_disconnect(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/apikeys")
-async def save_api_keys(payload: APIKeysUpdate, db: AsyncSession = Depends(get_db)):
-    if payload.deepseek_api_key:
-        result = await db.execute(select(AuthToken).where(AuthToken.provider == "deepseek"))
-        existing = result.scalar_one_or_none()
-        if existing:
-            existing.access_token = payload.deepseek_api_key
-        else:
-            db.add(AuthToken(provider="deepseek", access_token=payload.deepseek_api_key))
-        ai_service.api_key = payload.deepseek_api_key
-        await db.commit()
-
-    if payload.bybit_api_key and payload.bybit_api_secret:
-        try:
-            _write_env_updates(
-                settings.ENV_FILE_PATH,
-                {
-                    "BYBIT_API_KEY": payload.bybit_api_key,
-                    "BYBIT_API_SECRET": payload.bybit_api_secret,
-                },
-            )
-            settings.BYBIT_API_KEY = payload.bybit_api_key
-            settings.BYBIT_API_SECRET = payload.bybit_api_secret
-            bybit_service.reload_credentials(payload.bybit_api_key, payload.bybit_api_secret)
-        except Exception as exc:
-            logger.warning(f"Could not update env file: {exc}")
-
-    return {
-        "success": True,
-        "message": "Saved. Bybit changes are active now and persist after restart.",
-    }
+async def save_api_keys(
+    current_login: Optional[str] = Depends(require_authenticated_user),
+):
+    raise HTTPException(
+        status_code=400,
+        detail="Bybit and DeepSeek API keys are managed via .env on the server, not via the web UI.",
+    )
 
 
 @router.post("/load-tokens")
@@ -251,7 +199,4 @@ async def _load_tokens_from_db(db: AsyncSession):
     ):
         ai_service.set_codex_token(codex.access_token)
 
-    result = await db.execute(select(AuthToken).where(AuthToken.provider == "deepseek"))
-    deepseek = result.scalar_one_or_none()
-    if deepseek and deepseek.access_token:
-        ai_service.api_key = deepseek.access_token
+    ai_service.api_key = settings.DEEPSEEK_API_KEY

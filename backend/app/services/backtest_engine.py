@@ -15,16 +15,34 @@ import numpy as np
 from sqlalchemy import select, delete
 
 from app.models import (
-    BacktestSession, Trade, TradingMode, MarketType
+    BacktestSession, Trade, TradingMode, MarketType, TradeStatus, PositionSide, AISignal
 )
 from app.services.strategy.voltage_strategy import VoltageStrategy, Signal
 from app.services.bybit_service import bybit_service
+from app.services.ai_service import ai_service
+from app.services.macro_data_service import macro_data_service
+from app.services.journal_service import journal_service
 from app.database import AsyncSessionLocal
 
 
 class BacktestEngine:
     def __init__(self):
         self._active: dict[int, bool] = {}
+
+    @staticmethod
+    def _slice_until(
+        df: pd.DataFrame,
+        timestamp_ms: int,
+        *,
+        max_rows: Optional[int] = None,
+    ) -> pd.DataFrame:
+        if df.empty or "timestamp" not in df.columns:
+            return pd.DataFrame()
+
+        sliced = df[df["timestamp"] <= timestamp_ms].copy()
+        if max_rows and len(sliced) > max_rows:
+            sliced = sliced.iloc[-max_rows:].copy()
+        return sliced.reset_index(drop=True)
 
     async def run_backtest(
         self,
@@ -54,6 +72,7 @@ class BacktestEngine:
             balance = initial_balance
             equity_curve = [{"time": start_date.isoformat(), "equity": balance}]
             total = len(symbols)
+            macro_context = await macro_data_service.get_historical_context(start_date, end_date)
 
             for idx, symbol in enumerate(symbols):
                 if not self._active.get(session_id):
@@ -69,12 +88,21 @@ class BacktestEngine:
                     symbol=symbol,
                     market_type=market_type,
                     klines_map=klines_map,
+                    macro_context=macro_context,
                     start_date=start_date,
                     end_date=end_date,
                     balance=balance,
                     risk_pct=risk_per_trade_pct,
                     conf_threshold=ai_confidence_threshold,
                     leverage=leverage,
+                    session_id=session_id,
+                )
+
+                await self._persist_backtest_trades(
+                    symbol=symbol,
+                    market_type=market_type,
+                    trades=sym_trades,
+                    klines_map=klines_map,
                     session_id=session_id,
                 )
 
@@ -113,6 +141,9 @@ class BacktestEngine:
                     s.results_data = {
                         "equity_curve": equity_curve,
                         "monthly_pnl": metrics.get("monthly_pnl", {}),
+                        "macro_context": {
+                            "btc_dominance_source": macro_context.get("btc_dominance_source"),
+                        },
                         "trades_summary": [self._summary(t) for t in all_trades[:500]],
                     }
                     s.completed_at = datetime.now(timezone.utc)
@@ -182,6 +213,7 @@ class BacktestEngine:
         symbol: str,
         market_type: MarketType,
         klines_map: dict[str, pd.DataFrame],
+        macro_context: dict,
         start_date: datetime,
         end_date: datetime,
         balance: float,
@@ -210,6 +242,20 @@ class BacktestEngine:
                 continue
 
             current_close = float(bar["close"])
+            current_fear_greed = int(
+                macro_data_service.value_for_timestamp(
+                    macro_context.get("fear_greed", {}),
+                    ts,
+                    50,
+                )
+            )
+            current_btc_dominance = float(
+                macro_data_service.value_for_timestamp(
+                    macro_context.get("btc_dominance", {}),
+                    ts,
+                    50.0,
+                )
+            )
 
             # Check existing trade first
             if open_trade:
@@ -221,31 +267,45 @@ class BacktestEngine:
 
             # Only one position at a time per symbol
             h4_slice = h4.iloc[max(0, i - 200): i + 1].copy()
-            w_slice = klines_map.get("1W", pd.DataFrame())
-            d_slice = klines_map.get("1D", pd.DataFrame())
-            h1_slice = klines_map.get("1H", pd.DataFrame())
+            w_slice = self._slice_until(klines_map.get("1W", pd.DataFrame()), ts, max_rows=200)
+            d_slice = self._slice_until(klines_map.get("1D", pd.DataFrame()), ts, max_rows=250)
+            h1_slice = self._slice_until(klines_map.get("1H", pd.DataFrame()), ts, max_rows=300)
 
-            if len(h4_slice) < min_bars:
+            if len(h4_slice) < min_bars or d_slice.empty or h1_slice.empty:
                 continue
 
             try:
-                sig = strategy.run_all_filters(
+                strategy_signal = strategy.run_all_filters(
                     ohlcv_1w=w_slice, ohlcv_1d=d_slice,
                     ohlcv_4h=h4_slice, ohlcv_1h=h1_slice,
-                    btc_dominance=50.0, fear_greed=50,
+                    btc_dominance=current_btc_dominance,
+                    fear_greed=current_fear_greed,
                 )
             except Exception:
                 continue
 
+            market_data = {
+                "price": current_close,
+                "change_24h": 0,
+                "volume_24h": float(d_slice["volume"].iloc[-1]) if len(d_slice) else 0,
+            }
+
+            ai_result = await ai_service.analyze_market(
+                symbol=symbol,
+                market_type=market_type.value,
+                voltage_signal=strategy_signal,
+                market_data=market_data,
+            )
+
             if (
-                sig.signal in [Signal.LONG, Signal.SHORT]
-                and sig.confidence >= conf_threshold
-                and sig.filters_passed >= 4
-                and sig.entry_price
-                and sig.stop_loss
+                ai_result["signal"] in [Signal.LONG.value, Signal.SHORT.value]
+                and ai_result["confidence"] >= conf_threshold
+                and strategy_signal.filters_passed >= 4
+                and ai_result.get("entry_price")
+                and ai_result.get("stop_loss")
             ):
                 risk_amount = balance * (risk_pct / 100)
-                risk_per_unit = abs(sig.entry_price - sig.stop_loss)
+                risk_per_unit = abs(ai_result["entry_price"] - ai_result["stop_loss"])
                 if risk_per_unit < 1e-10:
                     continue
                 qty = (risk_amount * leverage) / risk_per_unit
@@ -253,20 +313,26 @@ class BacktestEngine:
                 open_trade = {
                     "symbol": symbol,
                     "market_type": market_type.value,
-                    "side": sig.signal.value,
+                    "side": ai_result["signal"],
                     "entry_price": current_close,
                     "entry_time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat(),
                     "qty": qty,
-                    "stop_loss": sig.stop_loss,
-                    "tp1": sig.take_profit_1,
-                    "tp2": sig.take_profit_2,
-                    "tp3": sig.take_profit_3,
+                    "stop_loss": ai_result.get("stop_loss"),
+                    "tp1": ai_result.get("take_profit_1"),
+                    "tp2": ai_result.get("take_profit_2"),
+                    "tp3": ai_result.get("take_profit_3"),
                     "tp1_filled": False, "tp2_filled": False, "tp3_filled": False,
                     "tp1_price_filled": None, "tp2_price_filled": None, "tp3_price_filled": None,
                     "trailing_stop": None, "trailing_active": False,
                     "realized_pnl": 0.0, "fees": 0.0, "exit_qty": 0.0,
-                    "confidence": sig.confidence,
-                    "filters_passed": sig.filters_passed,
+                    "confidence": ai_result["confidence"],
+                    "strategy_confidence": ai_result.get("strategy_confidence", strategy_signal.confidence),
+                    "ai_confidence": ai_result.get("ai_confidence", strategy_signal.confidence),
+                    "filters_passed": strategy_signal.filters_passed,
+                    "reasoning": ai_result.get("reasoning", ""),
+                    "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
+                    "fear_greed": current_fear_greed,
+                    "btc_dominance": current_btc_dominance,
                     "leverage": leverage,
                     "exit_price": None, "exit_time": None,
                     "exit_reason": None, "net_pnl": 0.0,
@@ -451,11 +517,116 @@ class BacktestEngine:
             "pnl": round(t.get("net_pnl", 0), 4),
             "reason": t.get("exit_reason"),
             "confidence": t.get("confidence"),
+            "strategy_confidence": t.get("strategy_confidence"),
+            "ai_confidence": t.get("ai_confidence"),
             "filters_passed": t.get("filters_passed"),
+            "scenario": t.get("scenario"),
+            "fear_greed": t.get("fear_greed"),
+            "btc_dominance": t.get("btc_dominance"),
+            "reasoning": t.get("reasoning"),
         }
 
     def stop_session(self, session_id: int):
         self._active[session_id] = False
+
+    async def _persist_backtest_trades(
+        self,
+        symbol: str,
+        market_type: MarketType,
+        trades: list[dict],
+        klines_map: dict[str, pd.DataFrame],
+        session_id: int,
+    ) -> None:
+        if not trades:
+            return
+
+        h1 = klines_map.get("1H", pd.DataFrame())
+        async with AsyncSessionLocal() as db:
+            for item in trades:
+                side = PositionSide.LONG if item["side"] == "long" else PositionSide.SHORT
+                ai_signal = item.get("side")
+                trade = Trade(
+                    mode=TradingMode.BACKTEST,
+                    market_type=market_type,
+                    symbol=symbol,
+                    side=side,
+                    status=TradeStatus.CLOSED,
+                    entry_price=item["entry_price"],
+                    entry_qty=item["qty"],
+                    entry_time=datetime.fromisoformat(item["entry_time"]),
+                    exit_price=item.get("exit_price"),
+                    exit_qty=item.get("exit_qty", item["qty"]),
+                    exit_time=datetime.fromisoformat(item["exit_time"]) if item.get("exit_time") else None,
+                    stop_loss_price=item.get("stop_loss"),
+                    take_profit_1_price=item.get("tp1"),
+                    take_profit_2_price=item.get("tp2"),
+                    take_profit_3_price=item.get("tp3"),
+                    tp1_filled=item.get("tp1_filled", False),
+                    tp2_filled=item.get("tp2_filled", False),
+                    tp3_filled=item.get("tp3_filled", False),
+                    trailing_stop_active=item.get("trailing_active", False),
+                    trailing_stop_price=item.get("trailing_stop"),
+                    realized_pnl=item.get("realized_pnl", 0.0),
+                    unrealized_pnl=0.0,
+                    fees_total=item.get("fees", 0.0),
+                    net_pnl=item.get("net_pnl", 0.0),
+                    leverage=item.get("leverage", 1),
+                    ai_signal=AISignal(ai_signal) if ai_signal in [member.value for member in AISignal] else None,
+                    ai_confidence=item.get("confidence"),
+                    ai_analysis_entry=item.get("reasoning"),
+                    ai_filters_snapshot={
+                        "filters_passed": item.get("filters_passed", 0),
+                        "strategy_confidence": item.get("strategy_confidence"),
+                        "ai_confidence": item.get("ai_confidence"),
+                        "scenario": item.get("scenario"),
+                        "fear_greed": item.get("fear_greed"),
+                        "btc_dominance": item.get("btc_dominance"),
+                    },
+                    voltage_filters={
+                        "filters_passed": item.get("filters_passed", 0),
+                        "scenario": item.get("scenario"),
+                    },
+                    backtest_session_id=session_id,
+                )
+                db.add(trade)
+                await db.flush()
+
+                chart_candles = self._build_trade_chart(h1, item)
+                await journal_service.create_or_update(db, trade, chart_candles=chart_candles)
+
+            await db.commit()
+
+    def _build_trade_chart(self, h1: pd.DataFrame, trade: dict) -> list[dict]:
+        if h1.empty:
+            return []
+
+        try:
+            entry_ts = int(datetime.fromisoformat(trade["entry_time"]).timestamp() * 1000)
+            exit_raw = trade.get("exit_time") or trade["entry_time"]
+            exit_ts = int(datetime.fromisoformat(exit_raw).timestamp() * 1000)
+        except (KeyError, TypeError, ValueError):
+            return []
+
+        start_ts = entry_ts - (48 * 60 * 60 * 1000)
+        end_ts = exit_ts + (48 * 60 * 60 * 1000)
+        window = h1[(h1["timestamp"] >= start_ts) & (h1["timestamp"] <= end_ts)].copy()
+        if window.empty:
+            return []
+
+        if len(window) > 200:
+            window = window.iloc[-200:].copy()
+
+        return [
+            {
+                "timestamp": int(row["timestamp"]),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row["volume"]),
+            }
+            for _, row in window.iterrows()
+        ]
 
 
 backtest_engine = BacktestEngine()

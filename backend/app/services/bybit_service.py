@@ -343,11 +343,11 @@ class BybitService:
     async def get_btc_dominance(self) -> float:
         """
         BTC dominance is not directly available via Bybit.
-        Returns a reasonable estimate based on BTC/total market cap.
-        For production: integrate CoinGlass or CoinMarketCap API.
+        Fetch a real-time global market snapshot from CoinLore as a no-key fallback.
         """
-        # Placeholder — integrate external API in production
-        return 50.0
+        from app.services.macro_data_service import macro_data_service
+
+        return await macro_data_service.get_current_btc_dominance()
 
     async def get_fear_greed_index(self) -> int:
         """

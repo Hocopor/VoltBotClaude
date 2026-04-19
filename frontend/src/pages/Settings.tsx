@@ -4,7 +4,7 @@ import { settingsApi, authApi, marketApi } from '../api'
 import { useStore } from '../store'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
-import { CheckCircle, XCircle, ExternalLink, Save } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Save, Shield } from 'lucide-react'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -19,7 +19,6 @@ export default function Settings() {
   const { mode } = useStore()
   const qc = useQueryClient()
   const { codexConnected, deepseekConfigured, bybitConfigured, setAuthStatus } = useStore()
-  const [apiKeys, setApiKeys] = useState({ bybit_api_key: '', bybit_api_secret: '', deepseek_api_key: '' })
   const [selectedSpotPairs, setSelectedSpotPairs] = useState<string[]>([])
   const [selectedFutPairs, setSelectedFutPairs] = useState<string[]>([])
   const [spotSearch, setSpotSearch] = useState('')
@@ -50,18 +49,6 @@ export default function Settings() {
   const updateMut = useMutation({
     mutationFn: (d: any) => settingsApi.update(mode, d),
     onSuccess: () => { toast.success('Settings saved'); refetch() },
-  })
-
-  const saveKeysMut = useMutation({
-    mutationFn: (d: any) => authApi.saveApiKeys(d),
-    onSuccess: () => {
-      toast.success('API keys saved')
-      authApi.status().then(r => setAuthStatus({
-        codex: r.data.codex_connected,
-        deepseek: r.data.deepseek_configured,
-        bybit: r.data.bybit_configured,
-      }))
-    },
   })
 
   function Field({ label, name, type = 'number', step, min, max, value, onChange }: any) {
@@ -138,10 +125,13 @@ export default function Settings() {
                 : <XCircle size={14} className="text-voltage-red" />
               }
             </div>
-            <div><label>API Key</label><input type="password" value={apiKeys.bybit_api_key} onChange={e => setApiKeys({...apiKeys, bybit_api_key: e.target.value})} placeholder="••••••••" /></div>
-            <div><label>API Secret</label><input type="password" value={apiKeys.bybit_api_secret} onChange={e => setApiKeys({...apiKeys, bybit_api_secret: e.target.value})} placeholder="••••••••" /></div>
-            <button onClick={() => saveKeysMut.mutate(apiKeys)} className="btn-primary w-full text-xs">Save Bybit Keys</button>
-            <p className="text-[10px] text-voltage-muted">Requires app restart after saving</p>
+            <div className="flex items-start gap-2 text-xs text-voltage-muted bg-voltage-hover rounded p-2">
+              <Shield size={14} className="mt-0.5 text-voltage-accent" />
+              <div>
+                <p className="text-voltage-text font-semibold">Managed via server `.env`</p>
+                <p>Set `BYBIT_API_KEY` and `BYBIT_API_SECRET` on the server. The web UI does not store production secrets.</p>
+              </div>
+            </div>
           </div>
 
           {/* DeepSeek */}
@@ -153,8 +143,13 @@ export default function Settings() {
                 : <XCircle size={14} className="text-voltage-red" />
               }
             </div>
-            <div><label>API Key</label><input type="password" value={apiKeys.deepseek_api_key} onChange={e => setApiKeys({...apiKeys, deepseek_api_key: e.target.value})} placeholder="sk-..." /></div>
-            <button onClick={() => saveKeysMut.mutate({ bybit_api_key: '', bybit_api_secret: '', deepseek_api_key: apiKeys.deepseek_api_key })} className="btn-primary w-full text-xs">Save DeepSeek Key</button>
+            <div className="flex items-start gap-2 text-xs text-voltage-muted bg-voltage-hover rounded p-2">
+              <Shield size={14} className="mt-0.5 text-voltage-accent" />
+              <div>
+                <p className="text-voltage-text font-semibold">Managed via server `.env`</p>
+                <p>Set `DEEPSEEK_API_KEY` on the server. The web UI will later control model behavior, not raw secret storage.</p>
+              </div>
+            </div>
           </div>
 
           {/* Codex OAuth */}

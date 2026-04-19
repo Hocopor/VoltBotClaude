@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     OPENAI_CLIENT_SECRET: str = ""
     OPENAI_REDIRECT_URI: str = ""
 
+    # Optional market-macro providers
+    COINMARKETCAP_API_KEY: str = ""
+
     # Trading defaults
     DEFAULT_PAPER_BALANCE: float = 10000.0
     DEFAULT_BACKTEST_BALANCE: float = 10000.0

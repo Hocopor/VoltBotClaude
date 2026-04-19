@@ -31,7 +31,6 @@ export const authApi = {
   status:           () => api.get('/auth/status'),
   codexLoginUrl:    () => api.get('/auth/codex/login'),
   codexDisconnect:  () => api.delete('/auth/codex/disconnect'),
-  saveApiKeys:      (d: any) => api.post('/auth/apikeys', d),
   loadTokens:       () => api.post('/auth/load-tokens'),
 }
 
