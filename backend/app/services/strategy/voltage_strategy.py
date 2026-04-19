@@ -20,7 +20,6 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
-import pandas_ta as ta
 
 
 # ─────────────────────────────────────────────────────────────
@@ -983,7 +982,7 @@ class VoltageStrategy:
     def _rsi(self, df: pd.DataFrame, period: int, offset: int = 0) -> float:
         if len(df) < period + 1:
             return 50.0
-        series = ta.rsi(df["close"], length=period)
+        series = self._rsi_series(df["close"], period)
         if series is None or series.empty:
             return 50.0
         v = series.iloc[-(1 + offset)]
@@ -992,19 +991,21 @@ class VoltageStrategy:
     def _macd_hist(self, df: pd.DataFrame) -> float:
         if len(df) < 35:
             return 0.0
-        macd = ta.macd(df["close"])
-        if macd is None or macd.empty:
+        close = df["close"].astype(float)
+        ema_fast = close.ewm(span=12, adjust=False).mean()
+        ema_slow = close.ewm(span=26, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        hist = macd_line - signal_line
+        if hist.empty:
             return 0.0
-        h_cols = [c for c in macd.columns if "h" in c.lower()]
-        if not h_cols:
-            return 0.0
-        v = macd[h_cols[0]].iloc[-1]
+        v = hist.iloc[-1]
         return float(v) if not np.isnan(v) else 0.0
 
     def _atr(self, df: pd.DataFrame, period: int) -> float:
         if len(df) < period + 1:
             return 0.0
-        atr = ta.atr(df["high"], df["low"], df["close"], length=period)
+        atr = self._atr_series(df, period)
         if atr is None or atr.empty:
             return 0.0
         v = atr.iloc[-1]
@@ -1014,7 +1015,7 @@ class VoltageStrategy:
         """Average of ATR over ma_period bars (rolling mean of ATR)."""
         if len(df) < atr_period + ma_period:
             return self._atr(df, atr_period)
-        atr = ta.atr(df["high"], df["low"], df["close"], length=atr_period)
+        atr = self._atr_series(df, atr_period)
         if atr is None or atr.empty:
             return 0.0
         v = atr.rolling(ma_period).mean().iloc[-1]
@@ -1023,20 +1024,26 @@ class VoltageStrategy:
     def _stochastic(self, df: pd.DataFrame, k=5, d=3, smooth=3):
         if len(df) < k + d + smooth:
             return 50.0, 50.0
-        stoch = ta.stoch(df["high"], df["low"], df["close"], k=k, d=d, smooth_k=smooth)
-        if stoch is None or stoch.empty:
+        low_min = df["low"].rolling(window=k, min_periods=k).min()
+        high_max = df["high"].rolling(window=k, min_periods=k).max()
+        spread = (high_max - low_min).replace(0, np.nan)
+        raw_k = 100 * (df["close"] - low_min) / spread
+        smooth_k = raw_k.rolling(window=smooth, min_periods=smooth).mean()
+        d_line = smooth_k.rolling(window=d, min_periods=d).mean()
+        if smooth_k.empty or d_line.empty:
             return 50.0, 50.0
-        kc = [c for c in stoch.columns if "STOCHk" in c]
-        dc = [c for c in stoch.columns if "STOCHd" in c]
-        kv = float(stoch[kc[0]].iloc[-1]) if kc else 50.0
-        dv = float(stoch[dc[0]].iloc[-1]) if dc else 50.0
+        kv = float(smooth_k.iloc[-1])
+        dv = float(d_line.iloc[-1])
         return (kv if not np.isnan(kv) else 50.0,
                 dv if not np.isnan(dv) else 50.0)
 
     def _williams_r(self, df: pd.DataFrame, period=14) -> float:
         if len(df) < period:
             return -50.0
-        w = ta.willr(df["high"], df["low"], df["close"], length=period)
+        highest_high = df["high"].rolling(window=period, min_periods=period).max()
+        lowest_low = df["low"].rolling(window=period, min_periods=period).min()
+        spread = (highest_high - lowest_low).replace(0, np.nan)
+        w = -100 * (highest_high - df["close"]) / spread
         if w is None or w.empty:
             return -50.0
         v = w.iloc[-1]
@@ -1046,15 +1053,12 @@ class VoltageStrategy:
         if len(df) < 52:
             return False
         try:
-            ich = ta.ichimoku(df["high"], df["low"], df["close"])
-            if ich is None or not isinstance(ich, tuple):
-                return False
-            sa_cols = [c for c in ich[0].columns if "ISA" in c]
-            sb_cols = [c for c in ich[0].columns if "ISB" in c]
-            if not sa_cols or not sb_cols:
-                return False
-            sa = float(ich[0][sa_cols[0]].iloc[-1])
-            sb = float(ich[0][sb_cols[0]].iloc[-1])
+            high = df["high"].astype(float)
+            low = df["low"].astype(float)
+            tenkan = (high.rolling(9, min_periods=9).max() + low.rolling(9, min_periods=9).min()) / 2
+            kijun = (high.rolling(26, min_periods=26).max() + low.rolling(26, min_periods=26).min()) / 2
+            sa = float(((tenkan + kijun) / 2).shift(26).iloc[-1])
+            sb = float(((high.rolling(52, min_periods=52).max() + low.rolling(52, min_periods=52).min()) / 2).shift(26).iloc[-1])
             if np.isnan(sa) or np.isnan(sb):
                 return False
             cloud_top = max(sa, sb)
@@ -1065,7 +1069,7 @@ class VoltageStrategy:
     def _obv_trend(self, df: pd.DataFrame) -> str:
         if len(df) < 20:
             return "neutral"
-        obv = ta.obv(df["close"], df["volume"])
+        obv = self._obv_series(df)
         if obv is None or len(obv) < 10:
             return "neutral"
         recent = obv.tail(10).values
@@ -1187,7 +1191,7 @@ class VoltageStrategy:
         if len(df) < 15:
             return False
         prices = df["close"].tail(15).values
-        rsi_s   = ta.rsi(df["close"], length=14)
+        rsi_s = self._rsi_series(df["close"], 14)
         if rsi_s is None or rsi_s.empty:
             return False
         rsi_vals = rsi_s.tail(15).values
@@ -1204,3 +1208,34 @@ class VoltageStrategy:
         if self._detect_pin_bar(h1):
             return "pin_bar"
         return "none"
+
+    def _rsi_series(self, close: pd.Series, period: int) -> pd.Series:
+        delta = close.astype(float).diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.fillna(50.0)
+
+    def _atr_series(self, df: pd.DataFrame, period: int) -> pd.Series:
+        high = df["high"].astype(float)
+        low = df["low"].astype(float)
+        close = df["close"].astype(float)
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [
+                high - low,
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    def _obv_series(self, df: pd.DataFrame) -> pd.Series:
+        close = df["close"].astype(float)
+        volume = df["volume"].astype(float)
+        direction = np.sign(close.diff().fillna(0.0))
+        return (volume * direction).cumsum()
