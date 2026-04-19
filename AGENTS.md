@@ -1,13 +1,33 @@
 # AGENTS
 
-## Live Plan Rule
+## Live Plan
 
-Always keep a live task plan during the work.
+- The live plan file is always `LIVE_PLAN.md`.
+- Do not create alternative live plan files.
+- `LIVE_PLAN.md` must exist at all times during active work.
+- Before substantial work, update `LIVE_PLAN.md`.
+- After each substantial completed step, update `LIVE_PLAN.md` again.
 
-Required behavior:
-- At the start of each action, update the plan and mark what is starting, what is done, what is not done, and what is in progress.
-- At the end of each completed action, immediately update the plan and record the result.
-- If a new task, risk, blocker, or required check appears during the work, add it to the live plan right away.
-- If the user explicitly says `otmenyaem` or `ubiraem iz plana`, remove that item from the plan or mark it as canceled. Simply switching attention to another topic is not a cancelation.
-- Do not continue substantial work without an up-to-date live plan.
-- The plan must always reflect the real current state of the task: `done`, `not done`, `in progress`.
+## Live Plan Format
+
+- Use these status markers everywhere in `LIVE_PLAN.md`:
+  - `[x]` completed
+  - `[~]` in progress or partially completed
+  - `[]` not completed
+- Keep phases, tasks, blockers, next steps, and durable notes in `LIVE_PLAN.md`.
+- The file must always show the real current state of work.
+
+## Long-Lived Rules
+
+- Do not delete or replace `LIVE_PLAN.md` unless the user explicitly says to do so.
+- If the user changes topic, extend the existing plan instead of replacing it.
+- If the user says `otmenyaem` or `ubiraem iz plana`, remove that item or mark it canceled.
+- Temporary topic switches are not cancelation.
+
+## Durable Notes
+
+- Record critical findings, priorities, blockers, sequencing decisions, and architecture decisions in `LIVE_PLAN.md`.
+- Preserve the difference between:
+  - stabilizing the current implementation
+  - future redesign work
+- Re-check `LIVE_PLAN.md` before implementation so work follows the latest agreed direction.

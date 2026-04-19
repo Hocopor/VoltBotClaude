@@ -51,6 +51,15 @@ class RealOrderMonitor:
         self._running = False
         logger.info("Real order monitor stopped")
 
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        if value in (None, ""):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     async def _sync_cycle(self):
         """One sync cycle: fetch open orders + positions from Bybit, update DB."""
         async with AsyncSessionLocal() as db:
@@ -103,8 +112,8 @@ class RealOrderMonitor:
             new_status = self._map_order_status(bybit_status)
             if new_status and order.status != new_status:
                 order.status = new_status
-                filled_qty = float(eo.get("cumExecQty", 0))
-                avg_price = float(eo.get("avgPrice", 0))
+                filled_qty = self._safe_float(eo.get("cumExecQty"))
+                avg_price = self._safe_float(eo.get("avgPrice"))
                 order.filled_qty = filled_qty
                 if avg_price > 0:
                     order.avg_fill_price = avg_price
@@ -125,12 +134,12 @@ class RealOrderMonitor:
             if not symbol:
                 continue
 
-            size = float(pos.get("size", 0))
+            size = self._safe_float(pos.get("size"))
             if size == 0:
                 continue  # No open position
 
-            unrealized_pnl = float(pos.get("unrealisedPnl", 0))
-            mark_price = float(pos.get("markPrice", 0))
+            unrealized_pnl = self._safe_float(pos.get("unrealisedPnl"))
+            mark_price = self._safe_float(pos.get("markPrice"))
 
             # Find matching open trade in DB
             result = await db.execute(
@@ -172,13 +181,13 @@ class RealOrderMonitor:
                 continue
 
             # Mark as filled
-            filled_qty = float(eo.get("cumExecQty", 0))
-            avg_price = float(eo.get("avgPrice", 0))
+            filled_qty = self._safe_float(eo.get("cumExecQty"))
+            avg_price = self._safe_float(eo.get("avgPrice"))
             order.status = OrderStatus.FILLED
             order.filled_qty = filled_qty
             order.avg_fill_price = avg_price
             order.filled_at = datetime.now(timezone.utc)
-            order.fee = float(eo.get("cumExecFee", 0))
+            order.fee = self._safe_float(eo.get("cumExecFee"))
 
             if not order.trade_id:
                 continue

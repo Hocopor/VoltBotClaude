@@ -45,3 +45,6 @@ redis_data/
 
 # Alembic
 alembic/versions/*.pyc
+logs.md
+AGENTS.md
+LIVE_PLAN.md

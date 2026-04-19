@@ -37,6 +37,15 @@ class BybitService:
     def reload_credentials(self, api_key: str, api_secret: str) -> None:
         self._configure_client(api_key, api_secret)
 
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        if value in (None, ""):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     async def _call(self, fn, **kwargs) -> dict:
         """Run a blocking pybit call in the thread pool."""
         loop = asyncio.get_event_loop()
@@ -67,10 +76,10 @@ class BybitService:
             for coin in acc.get("coin", []):
                 symbol = coin.get("coin", "")
                 coins[symbol] = {
-                    "equity": float(coin.get("equity", 0)),
-                    "available": float(coin.get("availableToWithdraw", 0)),
-                    "unrealized_pnl": float(coin.get("unrealisedPnl", 0)),
-                    "wallet_balance": float(coin.get("walletBalance", 0)),
+                    "equity": self._safe_float(coin.get("equity")),
+                    "available": self._safe_float(coin.get("availableToWithdraw")),
+                    "unrealized_pnl": self._safe_float(coin.get("unrealisedPnl")),
+                    "wallet_balance": self._safe_float(coin.get("walletBalance")),
                 }
         return coins
 
@@ -248,6 +257,8 @@ class BybitService:
         kwargs: dict[str, Any] = dict(category=category)
         if symbol:
             kwargs["symbol"] = symbol
+        elif category == "linear":
+            kwargs["settleCoin"] = "USDT"
         data = await self._call(self.client.get_open_orders, **kwargs)
         return data.get("list", [])
 
@@ -261,6 +272,8 @@ class BybitService:
         kwargs: dict[str, Any] = dict(category=category, limit=limit)
         if symbol:
             kwargs["symbol"] = symbol
+        elif category == "linear":
+            kwargs["settleCoin"] = "USDT"
         data = await self._call(self.client.get_order_history, **kwargs)
         return data.get("list", [])
 
@@ -271,6 +284,8 @@ class BybitService:
         kwargs: dict[str, Any] = dict(category=category)
         if symbol:
             kwargs["symbol"] = symbol
+        elif category == "linear":
+            kwargs["settleCoin"] = "USDT"
         data = await self._call(self.client.get_positions, **kwargs)
         return data.get("list", [])
 

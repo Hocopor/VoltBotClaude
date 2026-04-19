@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func, delete
+from sqlalchemy import select, desc, func, delete, case
 
 from app.database import get_db
 from app.models import JournalEntry, Trade, TradeStatus, TradingMode
