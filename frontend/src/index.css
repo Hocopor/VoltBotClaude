@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: #0a0b0e;
+    color: #e6edf3;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #111318; }
+  ::-webkit-scrollbar-thumb { background: #1e2230; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a3040; }
+}
+
+@layer components {
+  .panel {
+    @apply bg-voltage-panel border border-voltage-border rounded-lg;
+  }
+  .btn-primary {
+    @apply bg-voltage-accent text-black font-semibold px-4 py-2 rounded-md
+           hover:bg-yellow-400 transition-colors text-sm;
+  }
+  .btn-ghost {
+    @apply border border-voltage-border text-voltage-muted px-4 py-2 rounded-md
+           hover:bg-voltage-hover hover:text-voltage-text transition-colors text-sm;
+  }
+  .btn-danger {
+    @apply bg-voltage-red/10 text-voltage-red border border-voltage-red/30 px-4 py-2
+           rounded-md hover:bg-voltage-red/20 transition-colors text-sm;
+  }
+  .pnl-positive { @apply text-voltage-green font-mono; }
+  .pnl-negative { @apply text-voltage-red font-mono; }
+  .pnl-neutral  { @apply text-voltage-muted font-mono; }
+
+  .badge-long  { @apply bg-voltage-green/10 text-voltage-green border border-voltage-green/30 px-2 py-0.5 rounded text-xs font-mono; }
+  .badge-short { @apply bg-voltage-red/10 text-voltage-red border border-voltage-red/30 px-2 py-0.5 rounded text-xs font-mono; }
+  .badge-spot  { @apply bg-voltage-blue/10 text-voltage-blue border border-voltage-blue/30 px-2 py-0.5 rounded text-xs; }
+  .badge-futures { @apply bg-purple-500/10 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded text-xs; }
+
+  .mode-pill {
+    @apply px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-all border;
+  }
+  .mode-pill-active {
+    @apply bg-voltage-accent text-black border-voltage-accent;
+  }
+  .mode-pill-inactive {
+    @apply text-voltage-muted border-voltage-border hover:border-voltage-accent/40;
+  }
+
+  .stat-card {
+    @apply panel p-4 flex flex-col gap-1;
+  }
+  .stat-label {
+    @apply text-xs text-voltage-muted uppercase tracking-wider;
+  }
+  .stat-value {
+    @apply text-xl font-mono font-semibold text-voltage-text;
+  }
+
+  input, select, textarea {
+    @apply bg-voltage-hover border border-voltage-border rounded-md px-3 py-2 text-sm
+           text-voltage-text placeholder:text-voltage-muted
+           focus:outline-none focus:border-voltage-accent/60 transition-colors;
+  }
+  label { @apply text-sm text-voltage-muted mb-1 block; }
+}
+
+/* Lightweight Charts override */
+.tv-chart { border-radius: 0.5rem; overflow: hidden; }
+
+/* Confidence gauge */
+.confidence-bar { height: 4px; border-radius: 2px; transition: width 0.5s; }
+
+/* Pulse animation for live indicator */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.live-dot { animation: live-pulse 1.5s infinite; }
