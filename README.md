@@ -1,101 +1,49 @@
-# ⚡ VOLTAGE — AI Crypto Trading Bot
+# VOLTAGE
 
-> Automated crypto trading system powered by DeepSeek AI and the VOLTAGE strategy.  
-> Supports Bybit Mainnet · Spot Long · Futures Long/Short · Paper Trading · Backtesting
+VOLTAGE — это AI-бот для криптотрейдинга с веб-интерфейсом, FastAPI backend, React frontend и деплоем через Docker Compose. Публичный доступ предполагается через Cloudflare Tunnel.
 
----
+## Что внутри
 
-## Architecture
+- `backend/` — FastAPI, SQLAlchemy, Alembic, бизнес-логика бота
+- `frontend/` — React + Vite интерфейс
+- `nginx/` — reverse proxy для frontend, API и WebSocket
+- `scripts/` — скрипты деплоя и обновления
+- `docker-compose.yml` — production-стек
 
-```
-voltage-bot/
-├── backend/              Python 3.12 · FastAPI · SQLAlchemy · asyncpg
-│   └── app/
-│       ├── api/routes/   REST API endpoints (9 modules)
-│       ├── models/       SQLAlchemy ORM models
-│       ├── services/
-│       │   ├── strategy/voltage_strategy.py   ← VOLTAGE 6-filter engine
-│       │   ├── ai_service.py                  ← DeepSeek integration
-│       │   ├── bybit_service.py               ← Bybit API wrapper
-│       │   ├── trading_engine.py              ← Main orchestrator
-│       │   ├── paper_trading.py               ← Paper simulation
-│       │   ├── backtest_engine.py             ← Historical backtest
-│       │   ├── real_order_monitor.py          ← Live order sync
-│       │   └── journal_service.py             ← Auto journal creation
-│       └── websocket/    Real-time WebSocket events
-├── frontend/             React 18 · TypeScript · Vite · Tailwind CSS
-│   └── src/
-│       ├── pages/        Dashboard · Journal · Analytics · Orders
-│       │                 Trades · Backtest · Settings
-│       ├── components/   TradingChart · PositionsTable · AISignalPanel
-│       └── hooks/        useWebSocket (real-time updates)
-├── nginx/                Reverse proxy config
-├── scripts/              deploy.sh · update.sh
-├── docker-compose.yml    Full prod stack
-└── .env.example          Config template
-```
+## Стек
 
----
+- Python 3.12
+- FastAPI
+- PostgreSQL 16
+- Redis 7
+- React 18 + Vite
+- Nginx
+- Cloudflare Tunnel
+- Docker Compose
 
-## Quick Start (VPS Ubuntu 24)
+## Архитектура деплоя
 
-### 1. Clone & Configure
+Прод-схема одна:
 
-```bash
-git clone <your-repo> voltage-bot
-cd voltage-bot
+1. `cloudflared` работает в Docker
+2. Tunnel ходит к `nginx` по имени сервиса `http://nginx:80`
+3. `nginx` проксирует:
+   - `/` -> frontend
+   - `/api/` -> backend
+   - `/ws/` -> backend WebSocket
+   - `/health` -> backend healthcheck
+4. На хосте `nginx` публикуется только на loopback:
+   - `127.0.0.1:${APP_PORT}:80`
 
-# Copy and fill in your credentials
-cp .env.example .env
-nano .env
-```
+Это значит:
 
-### 2. Fill `.env`
+- наружу не нужно открывать `80/443` для приложения
+- публичный доступ должен идти через Cloudflare Tunnel
+- локальная проверка origin выполняется через `127.0.0.1:${APP_PORT}`
 
-```env
-# Required — generate strong random values:
-POSTGRES_PASSWORD=<strong-password>
-REDIS_PASSWORD=<strong-password>
-SECRET_KEY=<32+-char-random-string>
+## Быстрый старт на сервере
 
-# Bybit Mainnet API
-BYBIT_API_KEY=your_key
-BYBIT_API_SECRET=your_secret
-
-# DeepSeek AI
-DEEPSEEK_API_KEY=sk-...
-
-# Cloudflare Tunnel (required for remote access via your domain)
-CLOUDFLARE_TUNNEL_TOKEN=your_tunnel_token
-
-# Local loopback port for the nginx origin
-APP_PORT=8088
-
-# Your public domain
-ALLOWED_ORIGINS=https://trading.yourdomain.com
-```
-
-### 3. Deploy
-
-```bash
-chmod +x scripts/deploy.sh
-sudo bash scripts/deploy.sh
-```
-
-The script will:
-- Install Docker if needed
-- Build all containers
-- Start the full stack
-- Run DB migrations
-- Start Cloudflare Tunnel inside Docker
-
----
-
-## Server Deploy Guide
-
-### 1. Prepare the server
-
-Install Git and clone the project:
+### 1. Подготовить сервер
 
 ```bash
 sudo apt-get update
@@ -104,48 +52,59 @@ git clone <your-repo> voltage-bot
 cd voltage-bot
 ```
 
-### 2. Create and fill `.env`
-
-Create the production env file from the template:
+### 2. Создать `.env`
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Required values:
-- `POSTGRES_PASSWORD`
-- `REDIS_PASSWORD`
-- `SECRET_KEY`
-- `CLOUDFLARE_TUNNEL_TOKEN`
-- `ALLOWED_ORIGINS=https://your-subdomain.yourdomain.com`
-- `APP_PORT=8088` or another free local loopback port
+Минимально обязательные переменные:
 
-Optional but usually needed for full functionality:
-- `BYBIT_API_KEY`
-- `BYBIT_API_SECRET`
-- `DEEPSEEK_API_KEY`
-- `OPENAI_CLIENT_ID`
-- `OPENAI_CLIENT_SECRET`
-- `OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callback`
+```env
+POSTGRES_PASSWORD=<strong-password>
+REDIS_PASSWORD=<strong-password>
+SECRET_KEY=<long-random-string>
+CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
+ALLOWED_ORIGINS=https://your-subdomain.yourdomain.com
+APP_PORT=8088
+```
 
-### 3. Run the deployment
+Обычно также понадобятся:
+
+```env
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+DEEPSEEK_API_KEY=...
+OPENAI_CLIENT_ID=...
+OPENAI_CLIENT_SECRET=...
+OPENAI_REDIRECT_URI=https://your-subdomain.yourdomain.com/api/auth/codex/callback
+```
+
+Примечания:
+
+- `APP_PORT` — локальный порт на хосте, только для loopback-доступа
+- `ALLOWED_ORIGINS` должен совпадать с вашим публичным доменом
+- `.env` не коммитится в git
+
+### 3. Запустить деплой
 
 ```bash
 chmod +x scripts/deploy.sh scripts/update.sh
 sudo bash scripts/deploy.sh
 ```
 
-What the script does:
-- installs Docker if it is missing
-- checks Docker Compose
-- builds the images
-- starts `postgres`, `redis`, `backend`, `frontend`, `nginx`, and `cloudflared`
-- waits for `http://127.0.0.1:${APP_PORT}/health`
+Что делает скрипт:
 
-### 4. Verify local origin health
+- устанавливает Docker, если его нет
+- проверяет Docker Compose plugin
+- собирает образы
+- поднимает `postgres`, `redis`, `backend`, `frontend`, `nginx`, `cloudflared`
+- ждёт успешный ответ от `http://127.0.0.1:${APP_PORT}/health`
 
-Check that nginx and backend are reachable locally:
+### 4. Проверить, что origin жив
+
+Если `APP_PORT=8088`, то:
 
 ```bash
 curl http://127.0.0.1:8088/health
@@ -153,168 +112,129 @@ docker compose ps
 docker compose logs --tail 50 backend nginx cloudflared
 ```
 
-If you use a different `APP_PORT`, replace `8088` in the command.
+Ожидаемо:
 
-### 5. Configure Cloudflare hostname
+- `/health` возвращает JSON со статусом `ok`
+- контейнеры `backend`, `nginx`, `cloudflared`, `postgres`, `redis` запущены
 
-In Cloudflare Zero Trust:
-1. Open **Networks → Tunnels**
-2. Open the tunnel that matches your token
-3. Add a **Public Hostname**
-4. Set your subdomain, for example `trading.yourdomain.com`
-5. Set the service target to `http://nginx:80`
+## Настройка Cloudflare Tunnel
 
-Important:
-- do not point the tunnel to `localhost:80`
-- the tunnel runs inside Docker and must reach nginx by Docker service name
+После первого запуска контейнер `cloudflared` уже будет поднят с вашим token-based tunnel.
 
-### 6. Open the application
+В Cloudflare Zero Trust:
 
-After the hostname is attached to the tunnel, open:
+1. Откройте `Networks -> Tunnels`
+2. Найдите tunnel, соответствующий вашему токену
+3. Добавьте `Public Hostname`
+4. Укажите нужный поддомен, например `trading.yourdomain.com`
+5. В качестве origin service укажите:
+
+```text
+http://nginx:80
+```
+
+Важно:
+
+- не указывайте `http://localhost:80`
+- tunnel находится внутри Docker-сети и должен обращаться к origin по имени сервиса
+
+После этого приложение должно открываться по адресу:
 
 ```text
 https://your-subdomain.yourdomain.com
 ```
 
-### 7. Updating the deployment
+## Обновление
 
 ```bash
 bash scripts/update.sh
 ```
 
-### 8. Useful troubleshooting commands
+Скрипт:
+
+- останавливает текущий стек
+- пересобирает образы без кэша
+- поднимает контейнеры заново
+- ждёт успешный healthcheck
+
+## Полезные команды
+
+Просмотр статуса:
 
 ```bash
 docker compose ps
+```
+
+Логи:
+
+```bash
 docker compose logs -f backend nginx cloudflared
+```
+
+Проверка health:
+
+```bash
 curl http://127.0.0.1:8088/health
+```
+
+Рестарт backend:
+
+```bash
 docker compose restart backend
+```
+
+Рестарт tunnel:
+
+```bash
 docker compose restart cloudflared
 ```
 
----
-
-## Cloudflare Tunnel Setup
-
-1. Go to **Cloudflare Zero Trust → Networks → Tunnels**
-2. Create a tunnel → copy the token
-3. Set in `.env`: `CLOUDFLARE_TUNNEL_TOKEN=your_token`
-4. Run the stack so the `cloudflared` container joins the Docker network
-5. In Cloudflare dashboard, add a Public Hostname:
-   - Subdomain: `trading` (or whatever you prefer)
-   - Service: `http://nginx:80`
-
-Why `http://nginx:80` and not `localhost`:
-- `cloudflared` runs inside Docker in this project
-- it must reach the origin through the Docker network by service name
-
-Local origin checks:
-- App health: `http://127.0.0.1:8088/health`
-- Frontend/API origin: `http://127.0.0.1:8088`
-
----
-
-## VOLTAGE Strategy — 6 Filters
-
-The bot strictly follows the VOLTAGE strategy. All 6 filters must pass for a trade:
-
-| Filter | Name | Key Indicators |
-|--------|------|----------------|
-| 1 | BTC Dominance & Sentiment | BTC.D, Fear & Greed, Total MCAP |
-| 2 | Multi-Timeframe Analysis | EMA21/55 on 1W/1D/4H/1H, Ichimoku |
-| 3 | Crypto Indicators | RSI(14) 35-65, Stochastic(5,3,3), Williams%R, ATR |
-| 4 | **Volume** *(most important)* | OBV, Volume Delta, VPVR, Accumulation |
-| 5 | Price Action | Engulfing, Pin Bar, Liquidity Grab, Consolidation |
-| 6 | Liquidity & Clusters | Order book depth, cluster analysis |
-
-**Risk Management (fixed rules):**
-- Position size: 1-3% of deposit per trade
-- TP1 = 1.5R → close 40%, move SL to breakeven
-- TP2 = 3.0R → close 30%
-- TP3 = 5.0R → close 30% + activate trailing stop
-- SL for alts: 8-12% · SL for BTC/ETH: 5-8%
-
----
-
-## Trading Modes
-
-| Mode | Description | Data |
-|------|-------------|------|
-| **Real** | Live trading on Bybit Mainnet | Real balance, real orders |
-| **Paper** | Simulated trading at live prices | Configurable virtual balance |
-| **Backtest** | Historical walk-forward simulation | Bybit historical OHLCV |
-
-Each mode is completely independent — dashboard, journal, analytics, orders, trades all show only the selected mode's data.
-
----
-
-## API Endpoints
-
-| Prefix | Description |
-|--------|-------------|
-| `/auth/` | Codex OAuth, API key management |
-| `/trading/` | Engine control, positions, PnL |
-| `/orders/` | All order types (open/filled/cancelled/SL/TP) |
-| `/trades/` | Full trade lifecycle with PnL |
-| `/journal/` | Trader diary, AI analysis, PnL calendar |
-| `/analytics/` | Equity curve, heatmap, filter performance |
-| `/settings/` | Per-mode configuration |
-| `/backtest/` | Session management, results |
-| `/market/` | Pairs, klines, orderbook, Fear&Greed |
-| `/ws` | WebSocket (real-time events) |
-
----
-
-## WebSocket Events
-
-```
-trade.opened       → New position opened
-trade.closed       → Position closed (with PnL)
-order.filled       → Order execution
-pnl.update         → Real-time PnL for open positions
-ai.signal          → New AI analysis result
-balance.update     → Balance change
-backtest.progress  → Backtest % complete
-backtest.complete  → Backtest finished
-engine.status      → Engine started/stopped
-```
-
----
-
-## Operations
+Остановка стека:
 
 ```bash
-# View logs
-docker compose logs -f backend nginx cloudflared
-
-# Restart backend only
-docker compose restart backend
-
-# Stop everything
 docker compose down
-
-# Update to latest
-bash scripts/update.sh
-
-# Database shell
-docker compose exec postgres psql -U voltage voltage
-
-# Backup database
-docker compose exec postgres pg_dump -U voltage voltage > backup_$(date +%Y%m%d).sql
 ```
 
----
+Подключение к PostgreSQL:
 
-## Security Notes
+```bash
+docker compose exec postgres psql -U voltage voltage
+```
 
-- API docs (`/docs`) are disabled in production (`DEBUG=false`)
-- All secrets are in `.env` — never commit it to git
-- Bybit API keys should have **trading permissions only** — no withdrawal
-- The app runs as a non-root user inside Docker
-- Nginx binds only to `127.0.0.1:${APP_PORT}` on the host; public traffic should come through Cloudflare Tunnel
+## Переменные окружения
 
----
+Основные переменные из `.env.example`:
 
-## Support
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `REDIS_PASSWORD`
+- `SECRET_KEY`
+- `DEBUG`
+- `BYBIT_API_KEY`
+- `BYBIT_API_SECRET`
+- `BYBIT_TESTNET`
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
+- `DEEPSEEK_MODEL`
+- `OPENAI_CLIENT_ID`
+- `OPENAI_CLIENT_SECRET`
+- `OPENAI_REDIRECT_URI`
+- `CLOUDFLARE_TUNNEL_TOKEN`
+- `APP_PORT`
+- `ALLOWED_ORIGINS`
+- `LOG_LEVEL`
 
-Built for personal use on VPS Ubuntu 24 with Cloudflare Tunnel access.
+## Безопасность
+
+- не коммитьте `.env`
+- держите `nginx` только на loopback-порту, как в compose
+- не давайте Bybit API ключам права на вывод средств
+- публичный трафик должен идти через Cloudflare Tunnel, а не через прямую публикацию `80/443`
+
+## Что важно знать
+
+- текущий деплой рассчитан на один production-стек
+- Cloudflare Tunnel является обязательной частью схемы доступа
+- приложение не предполагает отдельный внешний TLS-терминатор на самом сервере
+- для локальной проверки используйте `127.0.0.1:${APP_PORT}`
