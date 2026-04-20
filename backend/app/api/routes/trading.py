@@ -202,9 +202,13 @@ async def run_manual_analysis(
 
     try:
         fear_greed = await bybit_service.get_fear_greed_index()
-        btc_dominance = await bybit_service.get_btc_dominance()
-    except Exception:
-        fear_greed, btc_dominance = 50, 50.0
+    except Exception as exc:
+        raise HTTPException(503, f"Fear & Greed data unavailable for analysis: {exc}") from exc
+
+    try:
+        btc_dominance, btc_dominance_source = await bybit_service.get_btc_dominance_snapshot()
+    except Exception as exc:
+        raise HTTPException(503, f"BTC dominance data unavailable for analysis: {exc}") from exc
 
     try:
         ticker = await bybit_service.get_ticker_info(symbol, cat)
@@ -256,6 +260,7 @@ async def run_manual_analysis(
             "price": current_price,
             "fear_greed": fear_greed,
             "btc_dominance": btc_dominance,
+            "btc_dominance_source": btc_dominance_source,
             "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
             "manual_triggered": True,
         },
@@ -287,6 +292,7 @@ async def run_manual_analysis(
         "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
         "fear_greed": fear_greed,
         "btc_dominance": btc_dominance,
+        "btc_dominance_source": btc_dominance_source,
         "entry_price": ai_result.get("entry_price"),
         "stop_loss": ai_result.get("stop_loss"),
         "take_profit_1": ai_result.get("take_profit_1"),

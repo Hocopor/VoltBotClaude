@@ -12,21 +12,26 @@ class MacroDataService:
     """Historical macro context for backtests and runtime market filters."""
 
     def __init__(self) -> None:
-        self._coinlore_url = "https://api.coinlore.net/api/global/"
+        self._coinpaprika_global_url = "https://api.coinpaprika.com/v1/global"
         self._alternative_fng_url = "https://api.alternative.me/fng/"
         self._cmc_historical_url = "https://pro-api.coinmarketcap.com/v1/global-metrics/quotes/historical"
 
     async def get_current_btc_dominance(self) -> float:
+        value, _ = await self.get_current_btc_dominance_snapshot()
+        return value
+
+    async def get_current_btc_dominance_snapshot(self) -> tuple[float, str]:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(self._coinlore_url)
+                response = await client.get(self._coinpaprika_global_url)
                 response.raise_for_status()
                 payload = response.json()
-                if payload and isinstance(payload, list):
-                    return float(payload[0].get("btc_d", 50.0))
+                dominance = payload.get("bitcoin_dominance_percentage")
+                if dominance is None:
+                    raise ValueError("bitcoin_dominance_percentage is missing")
+                return float(dominance), "coinpaprika_current_global"
         except Exception as exc:
-            logger.warning(f"BTC dominance fetch failed, falling back to 50.0: {exc}")
-        return 50.0
+            raise RuntimeError(f"Current BTC dominance fetch failed from CoinPaprika: {exc}") from exc
 
     async def get_historical_context(self, start: datetime, end: datetime) -> dict:
         fear_greed = await self._get_historical_fear_greed(start, end)
@@ -101,12 +106,11 @@ class MacroDataService:
                 if values:
                     return self._normalize_daily_series(start, end, values, default=50.0), "coinmarketcap_historical"
 
-        current = await self.get_current_btc_dominance()
         logger.warning(
-            "Historical BTC dominance unavailable, repeating current value in backtest fallback. "
-            "Set COINMARKETCAP_API_KEY in .env for real historical BTC dominance."
+            "Historical BTC dominance is unavailable from configured providers. "
+            "No synthetic fallback will be used."
         )
-        return self._fill_daily_series(start, end, current), "coinlore_current_repeated_fallback"
+        return {}, "unavailable_no_historical_btc_dominance_provider"
 
     def value_for_timestamp(
         self,

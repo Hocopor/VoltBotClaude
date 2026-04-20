@@ -297,7 +297,7 @@ export default function Analytics() {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="text-voltage-muted border-b border-voltage-border">
-                  {['Time','Symbol','Signal','Conf.','Scenario','Opened','Reasoning'].map(h => (
+                  {['Time','Symbol','Signal','Conf.','Scenario','Opened','Gate','Reasoning'].map(h => (
                     <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -321,6 +321,14 @@ export default function Analytics() {
                     </td>
                     <td className="px-3 py-2 text-voltage-muted">{item.market_context?.scenario ?? '—'}</td>
                     <td className="px-3 py-2 text-voltage-muted">{item.trade_opened ? 'yes' : 'no'}</td>
+                    <td className="px-3 py-2 text-voltage-muted whitespace-nowrap">
+                      {item.market_context?.trade_gate_reason ?? '-'}
+                      {item.market_context?.trade_confidence_threshold != null ? (
+                        <div className="text-[10px] text-voltage-muted/70">
+                          thr {(item.market_context.trade_confidence_threshold * 100).toFixed(0)}%
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2 text-voltage-muted min-w-[360px]">{item.reasoning || '—'}</td>
                   </tr>
                 ))}

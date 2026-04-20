@@ -147,11 +147,26 @@ class TradingEngine:
         except Exception:
             orderbook = None
 
+        fear_greed = None
+        btc_dominance = None
+        btc_dominance_source = "unavailable"
+
         try:
             fear_greed = await bybit_service.get_fear_greed_index()
-            btc_dominance = await bybit_service.get_btc_dominance()
-        except Exception:
-            fear_greed, btc_dominance = 50, 50.0
+        except Exception as exc:
+            logger.warning(f"Fear & Greed fetch failed for {symbol}: {exc}")
+
+        try:
+            btc_dominance, btc_dominance_source = await bybit_service.get_btc_dominance_snapshot()
+        except Exception as exc:
+            logger.warning(f"BTC dominance fetch failed for {symbol}: {exc}")
+
+        if fear_greed is None or btc_dominance is None:
+            logger.warning(
+                f"Skipping analysis for {symbol}: market macro context unavailable "
+                f"(fear_greed={fear_greed}, btc_dominance={btc_dominance})"
+            )
+            return
 
         # --- VOLTAGE Strategy ---
         is_major = symbol.replace("USDT", "") in MAJORS
@@ -180,6 +195,43 @@ class TradingEngine:
             market_data=market_data,
         )
 
+        # --- Decide to trade ---
+        confidence = ai_result["confidence"]
+        signal = ai_result["signal"]
+        threshold = settings.ai_confidence_threshold
+        trade_gate_reason = self._get_trade_gate_reason(
+            signal=signal,
+            confidence=confidence,
+            threshold=threshold,
+            filters_passed=voltage_signal.filters_passed,
+            auto_trading_enabled=settings.auto_trading_enabled,
+        )
+        trade_opened = False
+        opened_trade_id: Optional[int] = None
+
+        if trade_gate_reason == "eligible_for_execution":
+            logger.info(
+                f"SIGNAL: {symbol} {signal.upper()} | "
+                f"conf={confidence:.3f} | filters={voltage_signal.filters_passed}/6"
+            )
+            trade_opened, trade_gate_reason, opened_trade_id = await self._execute_trade(
+                symbol=symbol,
+                market_type=market_type,
+                mode=mode,
+                signal=signal,
+                ai_result=ai_result,
+                voltage_signal=voltage_signal,
+                settings=settings,
+                current_price=current_price,
+                klines_4h=klines["4H"],
+            )
+        else:
+            logger.debug(
+                f"No trade: {symbol} | {signal} conf={confidence:.3f} "
+                f"filters={voltage_signal.filters_passed}/6 threshold={threshold} "
+                f"reason={trade_gate_reason}"
+            )
+
         # --- Log analysis ---
         async with AsyncSessionLocal() as db:
             try:
@@ -189,7 +241,10 @@ class TradingEngine:
                     mode=mode,
                     symbol=symbol,
                     market_type=market_type,
-                    filters_state={"filters_passed": voltage_signal.filters_passed},
+                    filters_state={
+                        "filters_passed": voltage_signal.filters_passed,
+                        "minimum_filters_required": 4,
+                    },
                     indicators={
                         "rsi": getattr(voltage_signal.filter3, "rsi_14", 50) if voltage_signal.filter3 else 50,
                         "macd_hist": getattr(voltage_signal.filter2, "h4_macd_hist", 0) if voltage_signal.filter2 else 0,
@@ -199,7 +254,11 @@ class TradingEngine:
                         "price": current_price,
                         "fear_greed": fear_greed,
                         "btc_dominance": btc_dominance,
+                        "btc_dominance_source": btc_dominance_source,
                         "scenario": voltage_signal.market_scenario.value,
+                        "trade_gate_reason": trade_gate_reason,
+                        "trade_confidence_threshold": threshold,
+                        "analysis_interval_minutes": 15,
                     },
                     signal=ai_signal_enum,
                     confidence=ai_result["confidence"],
@@ -209,6 +268,8 @@ class TradingEngine:
                     suggested_tp1=ai_result.get("take_profit_1"),
                     suggested_tp2=ai_result.get("take_profit_2"),
                     suggested_tp3=ai_result.get("take_profit_3"),
+                    trade_opened=trade_opened,
+                    trade_id=opened_trade_id,
                 )
                 db.add(log_entry)
                 await db.commit()
@@ -223,46 +284,14 @@ class TradingEngine:
             "signal": ai_result["signal"],
             "confidence": ai_result["confidence"],
             "filters_passed": voltage_signal.filters_passed,
+            "threshold": threshold,
+            "trade_gate_reason": trade_gate_reason,
             "entry": ai_result.get("entry_price"),
             "sl": ai_result.get("stop_loss"),
             "tp1": ai_result.get("take_profit_1"),
             "tp2": ai_result.get("take_profit_2"),
             "tp3": ai_result.get("take_profit_3"),
         })
-
-        # --- Decide to trade ---
-        confidence = ai_result["confidence"]
-        signal = ai_result["signal"]
-        threshold = settings.ai_confidence_threshold
-
-        should_trade = (
-            signal in ["long", "short"]
-            and confidence >= threshold
-            and voltage_signal.filters_passed >= 4
-            and settings.auto_trading_enabled
-        )
-
-        if should_trade:
-            logger.info(
-                f"SIGNAL: {symbol} {signal.upper()} | "
-                f"conf={confidence:.3f} | filters={voltage_signal.filters_passed}/6"
-            )
-            await self._execute_trade(
-                symbol=symbol,
-                market_type=market_type,
-                mode=mode,
-                signal=signal,
-                ai_result=ai_result,
-                voltage_signal=voltage_signal,
-                settings=settings,
-                current_price=current_price,
-                klines_4h=klines["4H"],
-            )
-        else:
-            logger.debug(
-                f"No trade: {symbol} | {signal} conf={confidence:.3f} "
-                f"filters={voltage_signal.filters_passed}/6 threshold={threshold}"
-            )
 
     async def _execute_trade(
         self,
@@ -287,8 +316,8 @@ class TradingEngine:
         tp3 = ai_result.get("take_profit_3")
 
         if not stop_loss:
-            logger.warning(f"No SL for {symbol} — skipping trade")
-            return
+            logger.warning(f"No SL for {symbol} - skipping trade")
+            return False, "stop_loss_missing", None
 
         if mode == TradingMode.REAL:
             balance = settings.spot_allocated_balance if market_type == MarketType.SPOT else settings.futures_allocated_balance
@@ -302,11 +331,11 @@ class TradingEngine:
                        if market_type == MarketType.SPOT
                        else settings.paper_current_balance_futures)
         else:
-            return  # Backtest handled separately
+            return False, "unsupported_mode", None  # Backtest handled separately
 
         if not balance or balance <= 0:
             logger.warning(f"No balance for {symbol} [{mode.value}]")
-            return
+            return False, "balance_unavailable", None
 
         risk_amount = balance * (settings.risk_per_trade_pct / 100)
         leverage = settings.default_leverage if market_type == MarketType.FUTURES else 1
@@ -322,11 +351,11 @@ class TradingEngine:
             )
         except Exception as e:
             logger.error(f"Qty calculation failed {symbol}: {e}")
-            return
+            return False, "qty_calculation_failed", None
 
         if qty <= 0:
-            logger.warning(f"qty={qty} for {symbol} — skipping")
-            return
+            logger.warning(f"qty={qty} for {symbol} - skipping")
+            return False, "qty_non_positive", None
 
         async with AsyncSessionLocal() as db:
             # Guard: no duplicate open positions for same symbol
@@ -339,7 +368,7 @@ class TradingEngine:
             )
             if existing.scalars().first():
                 logger.info(f"Already have open position in {symbol}")
-                return
+                return False, "open_position_exists", None
 
             # Also enforce max_open_positions
             count_q = await db.execute(
@@ -351,7 +380,7 @@ class TradingEngine:
             open_count = len(count_q.scalars().all())
             if open_count >= settings.max_open_positions:
                 logger.info(f"Max positions reached ({open_count}/{settings.max_open_positions})")
-                return
+                return False, "max_positions_reached", None
 
             trade = Trade(
                 mode=mode,
@@ -386,6 +415,26 @@ class TradingEngine:
 
             await db.commit()
             logger.info(f"Trade opened: {symbol} {signal.upper()} qty={qty} @ {entry_price}")
+            return True, "trade_opened", trade.id
+
+    @staticmethod
+    def _get_trade_gate_reason(
+        *,
+        signal: str,
+        confidence: float,
+        threshold: float,
+        filters_passed: int,
+        auto_trading_enabled: bool,
+    ) -> str:
+        if signal not in ["long", "short"]:
+            return "signal_not_actionable"
+        if confidence < threshold:
+            return "confidence_below_threshold"
+        if filters_passed < 4:
+            return "filters_below_minimum"
+        if not auto_trading_enabled:
+            return "auto_trading_disabled"
+        return "eligible_for_execution"
 
     async def _place_real_orders(
         self,
@@ -578,3 +627,4 @@ class TradingEngine:
 
 # Global singleton — imported by routes and main
 engine = TradingEngine()
+

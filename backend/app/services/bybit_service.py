@@ -343,11 +343,16 @@ class BybitService:
     async def get_btc_dominance(self) -> float:
         """
         BTC dominance is not directly available via Bybit.
-        Fetch a real-time global market snapshot from CoinLore as a no-key fallback.
+        Fetch a real-time global market snapshot from CoinPaprika.
         """
         from app.services.macro_data_service import macro_data_service
 
         return await macro_data_service.get_current_btc_dominance()
+
+    async def get_btc_dominance_snapshot(self) -> tuple[float, str]:
+        from app.services.macro_data_service import macro_data_service
+
+        return await macro_data_service.get_current_btc_dominance_snapshot()
 
     async def get_fear_greed_index(self) -> int:
         """

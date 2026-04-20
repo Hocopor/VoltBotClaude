@@ -76,6 +76,11 @@ class BacktestEngine:
             equity_curve = [{"time": start_date.isoformat(), "equity": balance}]
             total = len(symbols)
             macro_context = await macro_data_service.get_historical_context(start_date, end_date)
+            if macro_context.get("btc_dominance_source") == "unavailable_no_historical_btc_dominance_provider":
+                raise RuntimeError(
+                    "Historical BTC dominance is unavailable from configured providers. "
+                    "The backtest will not run with a synthetic BTC dominance fallback."
+                )
             stopped = False
 
             for idx, symbol in enumerate(symbols):
