@@ -4,6 +4,7 @@ Trading Routes — Engine control, AI signals, real-time positions
 from datetime import datetime, timezone
 from typing import Optional
 from loguru import logger
+import pandas as pd
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -11,12 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.database import get_db
-from app.models import BotSettings, TradingMode, MarketType, Trade, TradeStatus
+from app.models import BotSettings, TradingMode, MarketType, Trade, TradeStatus, AIAnalysisLog, AISignal
 from app.services.trading_engine import engine
 from app.services.bybit_service import bybit_service
+from app.services.ai_service import ai_service
+from app.services.strategy.voltage_strategy import VoltageStrategy
 from app.websocket.manager import manager, Events
 
 router = APIRouter()
+
+
+TF_MAP = {
+    "1W": "W",
+    "1D": "D",
+    "4H": "240",
+    "1H": "60",
+}
+MAJORS = {"BTC", "ETH"}
 
 
 class EngineControl(BaseModel):
@@ -35,6 +47,21 @@ class ManualTradeRequest(BaseModel):
     take_profit_3: Optional[float] = None
     qty: Optional[float] = None
     risk_percent: float = 2.0
+
+
+class ManualAnalysisRequest(BaseModel):
+    mode: TradingMode
+    symbol: str
+    market_type: MarketType
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @router.post("/engine")
@@ -145,6 +172,131 @@ async def get_balance(mode: TradingMode, db: AsyncSession = Depends(get_db)):
             "spot_initial": settings.backtest_initial_balance_spot,
             "futures_initial": settings.backtest_initial_balance_futures,
         }
+
+
+@router.post("/analyze")
+async def run_manual_analysis(
+    payload: ManualAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run an on-demand AI market analysis without opening a trade."""
+    symbol = payload.symbol.upper()
+    cat = "spot" if payload.market_type == MarketType.SPOT else "linear"
+
+    klines: dict[str, pd.DataFrame] = {}
+    for tf_name, tf_code in TF_MAP.items():
+        raw = await bybit_service.get_klines(symbol, tf_code, category=cat, limit=200)
+        if raw:
+            df = pd.DataFrame(raw)
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = df[col].astype(float)
+            klines[tf_name] = df
+
+    if not all(tf in klines for tf in ["1W", "1D", "4H", "1H"]):
+        raise HTTPException(503, f"Insufficient market data to analyze {symbol}")
+
+    try:
+        orderbook = await bybit_service.get_orderbook(symbol, category=cat)
+    except Exception:
+        orderbook = None
+
+    try:
+        fear_greed = await bybit_service.get_fear_greed_index()
+        btc_dominance = await bybit_service.get_btc_dominance()
+    except Exception:
+        fear_greed, btc_dominance = 50, 50.0
+
+    try:
+        ticker = await bybit_service.get_ticker_info(symbol, cat)
+    except Exception:
+        ticker = {}
+
+    current_price = _safe_float(ticker.get("lastPrice"), float(klines["4H"]["close"].iloc[-1]))
+    market_data = {
+        "price": current_price,
+        "change_24h": _safe_float(ticker.get("price24hPcnt"), 0.0) * 100,
+        "volume_24h": _safe_float(ticker.get("volume24h"), _safe_float(klines["1D"]["volume"].iloc[-1] if len(klines["1D"]) else 0)),
+    }
+
+    strategy = VoltageStrategy(symbol, is_major=symbol.replace("USDT", "") in MAJORS)
+    strategy_signal = strategy.run_all_filters(
+        ohlcv_1w=klines["1W"],
+        ohlcv_1d=klines["1D"],
+        ohlcv_4h=klines["4H"],
+        ohlcv_1h=klines["1H"],
+        orderbook=orderbook,
+        btc_dominance=btc_dominance,
+        fear_greed=fear_greed,
+    )
+
+    ai_result = await ai_service.analyze_market(
+        symbol=symbol,
+        market_type=payload.market_type.value,
+        voltage_signal=strategy_signal,
+        market_data=market_data,
+    )
+
+    signal_val = ai_result["signal"]
+    ai_signal_enum = AISignal(signal_val) if signal_val in [s.value for s in AISignal] else AISignal.NEUTRAL
+
+    log_entry = AIAnalysisLog(
+        mode=payload.mode,
+        symbol=symbol,
+        market_type=payload.market_type,
+        filters_state={
+            "filters_passed": strategy_signal.filters_passed,
+            "filters_total": strategy_signal.filters_total,
+        },
+        indicators={
+            "rsi": getattr(strategy_signal.filter3, "rsi_14", 50) if strategy_signal.filter3 else 50,
+            "macd_hist": getattr(strategy_signal.filter2, "h4_macd_hist", 0) if strategy_signal.filter2 else 0,
+            "atr": getattr(strategy_signal.filter3, "atr_14", 0) if strategy_signal.filter3 else 0,
+        },
+        market_context={
+            "price": current_price,
+            "fear_greed": fear_greed,
+            "btc_dominance": btc_dominance,
+            "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
+            "manual_triggered": True,
+        },
+        signal=ai_signal_enum,
+        confidence=ai_result["confidence"],
+        reasoning=ai_result.get("reasoning", "")[:2000],
+        suggested_entry=ai_result.get("entry_price"),
+        suggested_sl=ai_result.get("stop_loss"),
+        suggested_tp1=ai_result.get("take_profit_1"),
+        suggested_tp2=ai_result.get("take_profit_2"),
+        suggested_tp3=ai_result.get("take_profit_3"),
+        trade_opened=False,
+        trade_id=None,
+    )
+    db.add(log_entry)
+    await db.commit()
+    await db.refresh(log_entry)
+
+    return {
+        "id": log_entry.id,
+        "mode": payload.mode.value,
+        "symbol": symbol,
+        "market_type": payload.market_type.value,
+        "signal": ai_result["signal"],
+        "confidence": ai_result["confidence"],
+        "strategy_confidence": ai_result.get("strategy_confidence", strategy_signal.confidence),
+        "ai_confidence": ai_result.get("ai_confidence", strategy_signal.confidence),
+        "filters_passed": strategy_signal.filters_passed,
+        "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
+        "fear_greed": fear_greed,
+        "btc_dominance": btc_dominance,
+        "entry_price": ai_result.get("entry_price"),
+        "stop_loss": ai_result.get("stop_loss"),
+        "take_profit_1": ai_result.get("take_profit_1"),
+        "take_profit_2": ai_result.get("take_profit_2"),
+        "take_profit_3": ai_result.get("take_profit_3"),
+        "reasoning": ai_result.get("reasoning", ""),
+        "filters_assessment": ai_result.get("filters_assessment", {}),
+        "voltage_filters": ai_result.get("voltage_filters", {}),
+        "created_at": log_entry.created_at.isoformat() if log_entry.created_at else None,
+    }
 
 
 @router.post("/manual-trade")

@@ -51,6 +51,7 @@ export const marketApi = {
 export const tradingApi = {
   startEngine:    (mode: string) => api.post('/trading/engine', { mode, action: 'start' }),
   stopEngine:     (mode: string) => api.post('/trading/engine', { mode, action: 'stop' }),
+  analyze:        (d: { mode: string; symbol: string; market_type: string }) => api.post('/trading/analyze', d),
   engineStatus:   () => api.get('/trading/engine/status'),
   balance:        (mode: string) => api.get(`/trading/balance/${mode}`),
   openPositions:  (mode: string) => api.get(`/trading/open-positions/${mode}`),
@@ -88,6 +89,7 @@ export const analyticsApi = {
   equityCurve:     (mode: string) => api.get(`/analytics/equity-curve/${mode}`),
   heatmap:         (mode: string) => api.get(`/analytics/heatmap/${mode}`),
   voltageFilters:  (mode: string) => api.get(`/analytics/voltage-filters/${mode}`),
+  aiAnalyses:      (mode: string, params?: Record<string, any>) => api.get(`/analytics/ai-analyses/${mode}`, { params }),
 }
 
 // ─── SETTINGS ──────────────────────────────────────────────

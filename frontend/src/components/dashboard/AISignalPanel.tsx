@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { tradingApi } from '../../api'
 import clsx from 'clsx'
+import { useState } from 'react'
+import toast from 'react-hot-toast'
 
 const SIGNAL_COLOR: Record<string, string> = {
   long:    'text-voltage-green',
@@ -23,6 +25,7 @@ export default function AISignalPanel({
   market: string
   mode: string
 }) {
+  const [manualResult, setManualResult] = useState<any>(null)
   const { data: posData } = useQuery({
     queryKey: ['positions', mode],
     queryFn: () => tradingApi.openPositions(mode).then(r => r.data),
@@ -30,8 +33,19 @@ export default function AISignalPanel({
   })
 
   const pos = (posData?.positions ?? []).find((p: any) => p.symbol === symbol)
-  const signal = pos?.ai_signal?.toLowerCase() ?? null
-  const conf = pos?.ai_confidence ?? null
+  const signal = manualResult?.signal?.toLowerCase() ?? pos?.ai_signal?.toLowerCase() ?? null
+  const conf = manualResult?.confidence ?? pos?.ai_confidence ?? null
+  const reasoning = manualResult?.reasoning ?? pos?.ai_analysis_entry ?? null
+  const scenario = manualResult?.scenario ?? null
+  const filtersPassed = manualResult?.filters_passed ?? null
+
+  const analyzeMut = useMutation({
+    mutationFn: () => tradingApi.analyze({ mode, symbol, market_type: market === 'futures' ? 'futures' : 'spot' }),
+    onSuccess: (r) => {
+      setManualResult(r.data)
+      toast.success(`AI analysis ready: ${r.data.signal?.toUpperCase?.() || 'DONE'}`)
+    },
+  })
 
   return (
     <div className="panel p-3 flex-1 flex flex-col gap-2">
@@ -63,10 +77,17 @@ export default function AISignalPanel({
             </div>
           )}
 
-          {pos?.ai_analysis_entry && (
+          {reasoning && (
             <p className="text-[10px] text-voltage-muted leading-relaxed line-clamp-3">
-              {pos.ai_analysis_entry}
+              {reasoning}
             </p>
+          )}
+
+          {(scenario || filtersPassed != null) && (
+            <div className="flex items-center justify-between text-[10px] text-voltage-muted font-mono gap-2">
+              <span>{scenario ? `Scenario: ${scenario}` : 'Scenario: —'}</span>
+              <span>{filtersPassed != null ? `Filters: ${filtersPassed}/6` : 'Filters: —'}</span>
+            </div>
           )}
         </>
       ) : (
@@ -84,6 +105,14 @@ export default function AISignalPanel({
           </p>
         </div>
       )}
+
+      <button
+        onClick={() => analyzeMut.mutate()}
+        disabled={analyzeMut.isPending}
+        className="btn-ghost text-xs mt-auto"
+      >
+        {analyzeMut.isPending ? 'Analyzing...' : 'Run AI Analysis'}
+      </button>
     </div>
   )
 }

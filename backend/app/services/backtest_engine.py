@@ -69,15 +69,18 @@ class BacktestEngine:
 
         try:
             all_trades: list[dict] = []
+            all_ai_analyses: list[dict] = []
             all_decisions: list[dict] = []
             decision_stats: dict[str, int] = {}
             balance = initial_balance
             equity_curve = [{"time": start_date.isoformat(), "equity": balance}]
             total = len(symbols)
             macro_context = await macro_data_service.get_historical_context(start_date, end_date)
+            stopped = False
 
             for idx, symbol in enumerate(symbols):
                 if not self._active.get(session_id):
+                    stopped = True
                     break
                 logger.info(f"Backtest {symbol} ({idx+1}/{total}) [{session_id}]")
 
@@ -98,6 +101,8 @@ class BacktestEngine:
                     conf_threshold=ai_confidence_threshold,
                     leverage=leverage,
                     session_id=session_id,
+                    symbol_index=idx,
+                    total_symbols=total,
                 )
                 sym_trades = simulation["trades"]
 
@@ -114,48 +119,63 @@ class BacktestEngine:
                     equity_curve.append({"time": t["exit_time"] or "", "equity": round(balance, 2)})
 
                 all_trades.extend(sym_trades)
+                all_ai_analyses.extend(simulation["ai_analyses"])
                 all_decisions.extend(simulation["decisions"])
                 for reason, count in simulation["decision_stats"].items():
                     decision_stats[reason] = decision_stats.get(reason, 0) + count
 
+                if not self._active.get(session_id):
+                    stopped = True
+
                 progress = (idx + 1) / total
-                async with AsyncSessionLocal() as db:
-                    r = await db.execute(select(BacktestSession).where(BacktestSession.id == session_id))
-                    s = r.scalar_one_or_none()
-                    if s:
-                        s.progress = progress
-                        await db.commit()
+                interim_metrics = self._calc_metrics(all_trades, initial_balance, balance)
+                interim_metrics["equity_curve"] = equity_curve
+                interim_metrics["decision_stats"] = decision_stats
+                await self._update_session_state(
+                    session_id=session_id,
+                    status="stopped" if stopped else "running",
+                    progress=progress,
+                    final_balance=balance,
+                    metrics=interim_metrics,
+                    macro_context=macro_context,
+                    decisions=all_decisions,
+                    trades=all_trades,
+                    ai_analyses=all_ai_analyses,
+                    progress_marker={
+                        "symbol": symbol,
+                        "time": None,
+                        "equity": round(balance, 2),
+                        "progress_pct": round(progress * 100, 2),
+                    },
+                    completed=stopped,
+                )
+
+                if stopped:
+                    break
 
             metrics = self._calc_metrics(all_trades, initial_balance, balance)
             metrics["equity_curve"] = equity_curve
+            metrics["decision_stats"] = decision_stats
 
-            async with AsyncSessionLocal() as db:
-                r = await db.execute(select(BacktestSession).where(BacktestSession.id == session_id))
-                s = r.scalar_one_or_none()
-                if s:
-                    s.status = "done"
-                    s.final_balance = balance
-                    s.total_trades = metrics["total_trades"]
-                    s.winning_trades = metrics["winning_trades"]
-                    s.losing_trades = metrics["losing_trades"]
-                    s.win_rate = metrics["win_rate"]
-                    s.profit_factor = metrics["profit_factor"]
-                    s.max_drawdown = metrics["max_drawdown"]
-                    s.total_pnl = metrics["total_pnl"]
-                    s.avg_rr = metrics["avg_rr"]
-                    s.progress = 1.0
-                    s.results_data = {
-                        "equity_curve": equity_curve,
-                        "monthly_pnl": metrics.get("monthly_pnl", {}),
-                        "macro_context": {
-                            "btc_dominance_source": macro_context.get("btc_dominance_source"),
-                        },
-                        "decision_stats": decision_stats,
-                        "decision_log": all_decisions[:1000],
-                        "trades_summary": [self._summary(t) for t in all_trades[:500]],
-                    }
-                    s.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
+            final_status = "stopped" if stopped else "done"
+            await self._update_session_state(
+                session_id=session_id,
+                status=final_status,
+                progress=1.0 if not stopped else None,
+                final_balance=balance,
+                metrics=metrics,
+                macro_context=macro_context,
+                decisions=all_decisions,
+                trades=all_trades,
+                ai_analyses=all_ai_analyses,
+                progress_marker={
+                    "symbol": None,
+                    "time": None,
+                    "equity": round(balance, 2),
+                    "progress_pct": 100.0 if not stopped else None,
+                },
+                completed=True,
+            )
 
             from app.websocket.manager import manager, Events
             await manager.broadcast(Events.BACKTEST_COMPLETE, {
@@ -164,6 +184,7 @@ class BacktestEngine:
                 "total_trades": metrics["total_trades"],
                 "win_rate": metrics["win_rate"],
                 "total_pnl": metrics["total_pnl"],
+                "status": final_status,
             })
 
             return metrics
@@ -180,6 +201,87 @@ class BacktestEngine:
             return {"error": str(e)}
         finally:
             self._active.pop(session_id, None)
+
+    def _build_results_data(
+        self,
+        *,
+        equity_curve: list[dict],
+        macro_context: dict,
+        decision_stats: dict[str, int],
+        decisions: list[dict],
+        trades: list[dict],
+        ai_analyses: list[dict],
+        progress_marker: Optional[dict] = None,
+    ) -> dict:
+        return {
+            "equity_curve": equity_curve,
+            "monthly_pnl": self._calc_metrics(trades, equity_curve[0]["equity"] if equity_curve else 0.0, equity_curve[-1]["equity"] if equity_curve else 0.0).get("monthly_pnl", {}),
+            "macro_context": {
+                "btc_dominance_source": macro_context.get("btc_dominance_source"),
+            },
+            "decision_stats": decision_stats,
+            "decision_log": decisions[:1000],
+            "trades_summary": [self._summary(t) for t in trades[:500]],
+            "ai_analyses": ai_analyses[:1000],
+            "progress_marker": progress_marker,
+        }
+
+    async def _update_session_state(
+        self,
+        *,
+        session_id: int,
+        status: str,
+        progress: Optional[float],
+        final_balance: float,
+        metrics: dict,
+        macro_context: dict,
+        decisions: list[dict],
+        trades: list[dict],
+        ai_analyses: list[dict],
+        progress_marker: Optional[dict] = None,
+        completed: bool = False,
+    ) -> None:
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(BacktestSession).where(BacktestSession.id == session_id))
+            s = r.scalar_one_or_none()
+            if not s:
+                return
+
+            s.status = status
+            if progress is not None:
+                s.progress = progress
+            s.final_balance = final_balance
+            s.total_trades = metrics.get("total_trades", 0)
+            s.winning_trades = metrics.get("winning_trades", 0)
+            s.losing_trades = metrics.get("losing_trades", 0)
+            s.win_rate = metrics.get("win_rate", 0.0)
+            s.profit_factor = metrics.get("profit_factor", 0.0)
+            s.max_drawdown = metrics.get("max_drawdown", 0.0)
+            s.total_pnl = metrics.get("total_pnl", 0.0)
+            s.avg_rr = metrics.get("avg_rr", 0.0)
+            s.results_data = self._build_results_data(
+                equity_curve=metrics.get("equity_curve", []),
+                macro_context=macro_context,
+                decision_stats=metrics.get("decision_stats", {}),
+                decisions=decisions,
+                trades=trades,
+                ai_analyses=ai_analyses,
+                progress_marker=progress_marker,
+            )
+            if completed:
+                s.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        from app.websocket.manager import manager, Events
+        await manager.broadcast(
+            Events.BACKTEST_PROGRESS,
+            {
+                "session_id": session_id,
+                "status": status,
+                "progress": progress,
+                "progress_marker": progress_marker,
+            },
+        )
 
     async def _fetch_historical(
         self, symbol: str, category: str, start: datetime, end: datetime
@@ -229,8 +331,11 @@ class BacktestEngine:
         conf_threshold: float,
         leverage: int,
         session_id: int,
+        symbol_index: int,
+        total_symbols: int,
     ) -> dict[str, list[dict] | dict[str, int]]:
         trades: list[dict] = []
+        ai_analyses: list[dict] = []
         decisions: list[dict] = []
         decision_stats: dict[str, int] = {}
         h4 = klines_map["4H"]
@@ -315,6 +420,7 @@ class BacktestEngine:
             self._record_decision(
                 decisions=decisions,
                 decision_stats=decision_stats,
+                ai_analyses=ai_analyses,
                 symbol=symbol,
                 timestamp_ms=ts,
                 price=current_close,
@@ -324,6 +430,35 @@ class BacktestEngine:
                 fear_greed=current_fear_greed,
                 btc_dominance=current_btc_dominance,
             )
+
+            if i == min_bars or i % 12 == 0:
+                step_progress = (i - min_bars + 1) / max(len(h4) - min_bars, 1)
+                global_progress = min(0.999, (symbol_index + step_progress) / max(total_symbols, 1))
+                running_equity = balance + sum(t["net_pnl"] for t in trades)
+                interim_metrics = self._calc_metrics(trades, balance, running_equity)
+                interim_metrics["equity_curve"] = [{"time": start_date.isoformat(), "equity": balance}] + [
+                    {"time": t["exit_time"] or "", "equity": round(balance + sum(x["net_pnl"] for x in trades[:idx + 1]), 2)}
+                    for idx, t in enumerate(trades)
+                ]
+                interim_metrics["decision_stats"] = decision_stats
+                await self._update_session_state(
+                    session_id=session_id,
+                    status="running",
+                    progress=global_progress,
+                    final_balance=running_equity,
+                    metrics=interim_metrics,
+                    macro_context=macro_context,
+                    decisions=decisions,
+                    trades=trades,
+                    ai_analyses=ai_analyses,
+                    progress_marker={
+                        "symbol": symbol,
+                        "time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat(),
+                        "equity": round(running_equity, 2),
+                        "progress_pct": round(global_progress * 100, 2),
+                    },
+                    completed=False,
+                )
 
             if reason == "trade_opened":
                 risk_amount = balance * (risk_pct / 100)
@@ -373,6 +508,7 @@ class BacktestEngine:
 
         return {
             "trades": trades,
+            "ai_analyses": ai_analyses,
             "decisions": decisions,
             "decision_stats": decision_stats,
         }
@@ -394,6 +530,7 @@ class BacktestEngine:
         *,
         decisions: list[dict],
         decision_stats: dict[str, int],
+        ai_analyses: list[dict],
         symbol: str,
         timestamp_ms: int,
         price: float,
@@ -404,6 +541,31 @@ class BacktestEngine:
         btc_dominance: float,
     ) -> None:
         decision_stats[reason] = decision_stats.get(reason, 0) + 1
+        if len(ai_analyses) < 1000:
+            ai_analyses.append(
+                {
+                    "symbol": symbol,
+                    "time": datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat(),
+                    "price": round(price, 6),
+                    "signal": ai_result.get("signal"),
+                    "confidence": ai_result.get("confidence"),
+                    "strategy_confidence": ai_result.get("strategy_confidence", strategy_signal.confidence),
+                    "ai_confidence": ai_result.get("ai_confidence", strategy_signal.confidence),
+                    "filters_passed": strategy_signal.filters_passed,
+                    "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
+                    "fear_greed": fear_greed,
+                    "btc_dominance": round(btc_dominance, 4),
+                    "entry_price": ai_result.get("entry_price"),
+                    "stop_loss": ai_result.get("stop_loss"),
+                    "take_profit_1": ai_result.get("take_profit_1"),
+                    "take_profit_2": ai_result.get("take_profit_2"),
+                    "take_profit_3": ai_result.get("take_profit_3"),
+                    "reasoning": ai_result.get("reasoning", "")[:1500],
+                    "decision_reason": reason,
+                    "filters_assessment": ai_result.get("filters_assessment", {}),
+                    "voltage_filters": ai_result.get("voltage_filters", {}),
+                }
+            )
         if len(decisions) >= 1000:
             return
 

@@ -6,10 +6,10 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, desc
 
 from app.database import get_db
-from app.models import Trade, JournalEntry, TradingMode, TradeStatus, PositionSide, MarketType
+from app.models import Trade, JournalEntry, TradingMode, TradeStatus, PositionSide, MarketType, AIAnalysisLog
 
 router = APIRouter()
 
@@ -216,6 +216,50 @@ async def voltage_filter_performance(mode: TradingMode, db: AsyncSession = Depen
         })
 
     return {"data": data}
+
+
+@router.get("/ai-analyses/{mode}")
+async def ai_analyses(
+    mode: TradingMode,
+    limit: int = Query(default=100, ge=1, le=500),
+    symbol: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent AI analyses for a trading mode."""
+    query = select(AIAnalysisLog).where(AIAnalysisLog.mode == mode)
+    if symbol:
+        query = query.where(AIAnalysisLog.symbol == symbol.upper())
+
+    result = await db.execute(
+        query.order_by(desc(AIAnalysisLog.created_at)).limit(limit)
+    )
+    rows = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "mode": row.mode.value,
+                "symbol": row.symbol,
+                "market_type": row.market_type.value,
+                "signal": row.signal.value,
+                "confidence": row.confidence,
+                "reasoning": row.reasoning,
+                "suggested_entry": row.suggested_entry,
+                "suggested_sl": row.suggested_sl,
+                "suggested_tp1": row.suggested_tp1,
+                "suggested_tp2": row.suggested_tp2,
+                "suggested_tp3": row.suggested_tp3,
+                "trade_opened": row.trade_opened,
+                "trade_id": row.trade_id,
+                "filters_state": row.filters_state,
+                "indicators": row.indicators,
+                "market_context": row.market_context,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    }
 
 
 def _max_consecutive(results: list[int], value: int) -> int:

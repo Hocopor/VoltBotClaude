@@ -165,10 +165,22 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/sessions/{session_id}/stop")
-async def stop_session(session_id: int):
+async def stop_session(session_id: int, db: AsyncSession = Depends(get_db)):
     """Stop a running backtest."""
+    result = await db.execute(
+        select(BacktestSession).where(BacktestSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    if session.status in {"done", "error", "stopped"}:
+        return {"stopped": True, "status": session.status}
+
+    session.status = "stopping"
+    await db.commit()
     backtest_engine.stop_session(session_id)
-    return {"stopped": True}
+    return {"stopped": True, "status": "stopping"}
 
 
 @router.delete("/sessions/{session_id}")

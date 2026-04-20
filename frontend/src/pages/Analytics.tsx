@@ -52,6 +52,13 @@ export default function Analytics() {
     queryFn: () => journalApi.monthlyPnl(mode).then(r => r.data),
   })
 
+  const { data: aiAnalyses } = useQuery({
+    queryKey: ['analytics-ai-analyses', mode],
+    queryFn: () => analyticsApi.aiAnalyses(mode, { limit: 100 }).then(r => r.data),
+    enabled: mode !== 'backtest',
+    refetchInterval: 15000,
+  })
+
   if (!ov) return <div className="text-voltage-muted p-8 text-center">No analytics data yet. Start trading!</div>
 
   const pieData = [
@@ -278,6 +285,52 @@ export default function Analytics() {
           </div>
         </div>
       )}
+
+      <div className="panel p-4">
+        <h3 className="text-sm font-semibold mb-3 text-voltage-muted uppercase tracking-wider">AI Analyses</h3>
+        {mode === 'backtest' ? (
+          <p className="text-sm text-voltage-muted">
+            Backtest AI analyses are session-scoped. Open the Backtest page and select a session to inspect them.
+          </p>
+        ) : (aiAnalyses?.items?.length ?? 0) > 0 ? (
+          <div className="overflow-x-auto max-h-[420px]">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="text-voltage-muted border-b border-voltage-border">
+                  {['Time','Symbol','Signal','Conf.','Scenario','Opened','Reasoning'].map(h => (
+                    <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {aiAnalyses.items.map((item: any) => (
+                  <tr key={item.id} className="border-b border-voltage-border/30 hover:bg-voltage-hover/20 align-top">
+                    <td className="px-3 py-2 text-voltage-muted whitespace-nowrap">{item.created_at?.slice?.(0,16) ?? '—'}</td>
+                    <td className="px-3 py-2 text-voltage-text">{item.symbol}</td>
+                    <td className="px-3 py-2">
+                      <span className={
+                        item.signal === 'long' ? 'badge-long' :
+                        item.signal === 'short' ? 'badge-short' :
+                        'text-voltage-muted uppercase'
+                      }>
+                        {item.signal}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-voltage-muted whitespace-nowrap">
+                      {item.confidence != null ? `${(item.confidence * 100).toFixed(0)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-voltage-muted">{item.market_context?.scenario ?? '—'}</td>
+                    <td className="px-3 py-2 text-voltage-muted">{item.trade_opened ? 'yes' : 'no'}</td>
+                    <td className="px-3 py-2 text-voltage-muted min-w-[360px]">{item.reasoning || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-voltage-muted">No AI analyses recorded yet for this mode.</p>
+        )}
+      </div>
     </div>
   )
 }
