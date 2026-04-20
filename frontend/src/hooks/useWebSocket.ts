@@ -10,6 +10,7 @@ export function useWebSocket() {
   const handlers = useRef<Record<string, Handler[]>>({})
   const setWsConnected = useStore((s) => s.setWsConnected)
   const setLivePnl = useStore((s) => s.setLivePnl)
+  const setEngineRunning = useStore((s) => s.setEngineRunning)
   const qc = useQueryClient()
 
   const on = useCallback((event: string, handler: Handler) => {
@@ -78,6 +79,11 @@ export function useWebSocket() {
               break
             case 'balance.update':
               qc.invalidateQueries({ queryKey: ['balance'] })
+              break
+            case 'engine.status':
+              if (data?.mode) {
+                setEngineRunning(data.mode, data.status === 'started')
+              }
               break
             case 'backtest.progress':
               qc.invalidateQueries({ queryKey: ['backtest-sessions'] })

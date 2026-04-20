@@ -39,6 +39,10 @@ async def lifespan(app: FastAPI):
             result = await db.execute(select(BotSettings).where(BotSettings.mode == mode))
             if not result.scalar_one_or_none():
                 db.add(BotSettings(mode=mode))
+        result = await db.execute(select(BotSettings).where(BotSettings.mode == TradingMode.BACKTEST))
+        backtest_settings = result.scalar_one_or_none()
+        if backtest_settings and backtest_settings.auto_trading_enabled:
+            backtest_settings.auto_trading_enabled = False
         await db.commit()
     logger.info("✓ Default settings ensured")
 
@@ -51,7 +55,7 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import select
         result = await db.execute(select(BotSettings))
         for s in result.scalars().all():
-            if s.auto_trading_enabled:
+            if s.auto_trading_enabled and s.mode in (TradingMode.REAL, TradingMode.PAPER):
                 _bg_tasks.append(asyncio.create_task(trading_engine.start(s.mode)))
                 logger.info(f"✓ Resumed engine: {s.mode.value}")
 

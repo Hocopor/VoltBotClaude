@@ -52,19 +52,25 @@ export default function Dashboard() {
   })
 
   const isRunning = engineRunning[mode]
+  const isBacktestMode = mode === 'backtest'
 
   async function toggleEngine() {
+    if (isBacktestMode) {
+      toast('Use the Backtest page to run historical sessions.', { icon: '🧪' })
+      return
+    }
+
     setEngLoading(true)
     try {
       if (isRunning) {
         await tradingApi.stopEngine(mode)
-        setEngineRunning(mode, false)
         toast('Engine stopped', { icon: '⏹' })
       } else {
         await tradingApi.startEngine(mode)
-        setEngineRunning(mode, true)
         toast.success('Engine started')
       }
+      const status = await tradingApi.engineStatus()
+      setEngineRunning(mode, !!status.data?.[mode]?.running)
     } catch {}
     setEngLoading(false)
   }
@@ -98,15 +104,16 @@ export default function Dashboard() {
         <div className="flex-1" />
         <button
           onClick={toggleEngine}
-          disabled={engLoading}
+          disabled={engLoading || isBacktestMode}
           className={isRunning ? 'btn-danger' : 'btn-primary'}
+          title={isBacktestMode ? 'Backtest runs from the Backtest page, not from the live engine.' : undefined}
         >
           {engLoading
             ? <RefreshCw size={13} className="inline mr-1 animate-spin" />
             : isRunning
               ? <Square size={13} className="inline mr-1" />
               : <Play size={13} className="inline mr-1" />}
-          {isRunning ? 'Stop Engine' : 'Start Engine'}
+          {isBacktestMode ? 'Use Backtest Page' : isRunning ? 'Stop Engine' : 'Start Engine'}
         </button>
       </div>
 

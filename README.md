@@ -162,7 +162,7 @@ https://your-subdomain.yourdomain.com
 ## Обновление
 
 ```bash
-bash scripts/update.sh
+sudo bash scripts/update.sh
 ```
 
 Скрипт:

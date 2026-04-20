@@ -9,7 +9,7 @@ import Trades from './pages/Trades'
 import Backtest from './pages/Backtest'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
-import { authApi } from './api'
+import { authApi, tradingApi } from './api'
 import { useStore } from './store'
 
 export default function App() {
@@ -17,6 +17,7 @@ export default function App() {
   const setAppSession = useStore((s) => s.setAppSession)
   const clearAppSession = useStore((s) => s.clearAppSession)
   const setAuthStatus = useStore((s) => s.setAuthStatus)
+  const setEngineStatuses = useStore((s) => s.setEngineStatuses)
   const [checkingSession, setCheckingSession] = useState(true)
 
   useEffect(() => {
@@ -34,6 +35,14 @@ export default function App() {
                 bybit: status.data.bybit_configured,
               })
             })
+            .then(() => tradingApi.engineStatus())
+            .then((engineStatus) => {
+              setEngineStatuses({
+                real: !!engineStatus.data.real?.running,
+                paper: !!engineStatus.data.paper?.running,
+                backtest: !!engineStatus.data.backtest?.running,
+              })
+            })
         }
         clearAppSession()
         return null
@@ -43,6 +52,35 @@ export default function App() {
       })
       .finally(() => setCheckingSession(false))
   }, [])
+
+  useEffect(() => {
+    if (!authenticated) {
+      setEngineStatuses({ real: false, paper: false, backtest: false })
+      return
+    }
+
+    let cancelled = false
+
+    const syncEngineStatus = () =>
+      tradingApi.engineStatus()
+        .then((r) => {
+          if (cancelled) return
+          setEngineStatuses({
+            real: !!r.data.real?.running,
+            paper: !!r.data.paper?.running,
+            backtest: !!r.data.backtest?.running,
+          })
+        })
+        .catch(() => {})
+
+    syncEngineStatus()
+    const timer = window.setInterval(syncEngineStatus, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [authenticated])
 
   if (checkingSession) {
     return <div className="min-h-screen bg-voltage-bg flex items-center justify-center text-voltage-muted">Checking session...</div>

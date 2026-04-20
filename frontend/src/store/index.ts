@@ -11,6 +11,7 @@ interface VoltageStore {
   // Engine status
   engineRunning: { real: boolean; paper: boolean; backtest: boolean }
   setEngineRunning: (mode: TradingMode, running: boolean) => void
+  setEngineStatuses: (statuses: Partial<{ real: boolean; paper: boolean; backtest: boolean }>) => void
 
   // WebSocket
   wsConnected: boolean
@@ -48,6 +49,8 @@ export const useStore = create<VoltageStore>()(
       engineRunning: { real: false, paper: false, backtest: false },
       setEngineRunning: (mode, running) =>
         set((s) => ({ engineRunning: { ...s.engineRunning, [mode]: running } })),
+      setEngineStatuses: (statuses) =>
+        set((s) => ({ engineRunning: { ...s.engineRunning, ...statuses } })),
 
       wsConnected: false,
       setWsConnected: (wsConnected) => set({ wsConnected }),

@@ -44,6 +44,9 @@ async def control_engine(
     db: AsyncSession = Depends(get_db),
 ):
     """Start or stop the trading engine for a mode."""
+    if payload.mode == TradingMode.BACKTEST:
+        raise HTTPException(400, "Backtest uses its own engine. Use the Backtest page instead of Start Engine.")
+
     if payload.action == "start":
         # Update auto_trading_enabled in settings
         result = await db.execute(
@@ -72,7 +75,7 @@ async def control_engine(
             settings.auto_trading_enabled = False
             await db.commit()
 
-        await engine.stop()
+        await engine.stop(payload.mode)
         await manager.broadcast(Events.ENGINE_STATUS, {
             "mode": payload.mode.value,
             "status": "stopped"
@@ -92,6 +95,7 @@ async def engine_status(db: AsyncSession = Depends(get_db)):
             "auto_trading": s.auto_trading_enabled,
             "spot_enabled": s.spot_enabled,
             "futures_enabled": s.futures_enabled,
+            "running": engine.is_running(s.mode) if s.mode != TradingMode.BACKTEST else False,
         }
         for s in all_settings
     }

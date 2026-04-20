@@ -20,8 +20,9 @@ const NAV = [
 ]
 
 export default function Layout() {
-  const { wsConnected, livePnl, mode, appLogin, clearAppSession } = useStore()
+  const { wsConnected, livePnl, mode, appLogin, clearAppSession, engineRunning } = useStore()
   useWebSocket()   // Connect WS globally
+  const currentEngineRunning = engineRunning[mode]
 
   async function handleLogout() {
     await authApi.logout().catch(() => {})
@@ -73,9 +74,14 @@ export default function Layout() {
         <div className="px-4 py-3 border-t border-voltage-border space-y-1.5">
           <div className="flex items-center gap-2 text-xs">
             {wsConnected
-              ? <><div className="w-1.5 h-1.5 rounded-full bg-voltage-green live-dot" /><span className="text-voltage-green">Live</span></>
-              : <><WifiOff size={10} className="text-voltage-red" /><span className="text-voltage-red">Offline</span></>
+              ? <><div className="w-1.5 h-1.5 rounded-full bg-voltage-green live-dot" /><span className="text-voltage-green">WS Online</span></>
+              : <><WifiOff size={10} className="text-voltage-red" /><span className="text-voltage-red">WS Offline</span></>
             }
+          </div>
+          <div className="text-[10px] text-voltage-muted font-mono">
+            Engine: <span className={currentEngineRunning ? 'text-voltage-green uppercase' : 'text-voltage-red uppercase'}>
+              {currentEngineRunning ? 'running' : 'stopped'}
+            </span>
           </div>
           <div className="text-[10px] text-voltage-muted font-mono">
             Mode: <span className="text-voltage-accent uppercase">{mode}</span>

@@ -40,14 +40,17 @@ TF_MAP = {
 
 class TradingEngine:
     def __init__(self):
-        self._running = False
-        self._tasks: dict[str, asyncio.Task] = {}
+        self._running_modes: set[TradingMode] = set()
+        self._tasks: dict[TradingMode, dict[str, asyncio.Task]] = {}
         self.paper = PaperTradingEngine()
 
     async def start(self, mode: TradingMode):
-        if self._running:
+        if mode == TradingMode.BACKTEST:
+            logger.warning("Backtest mode is handled by the backtest engine, not the live trading engine")
             return
-        self._running = True
+        if mode in self._running_modes:
+            return
+        self._running_modes.add(mode)
         logger.info(f"VOLTAGE Engine starting [{mode.value}]")
 
         async with AsyncSessionLocal() as db:
@@ -55,7 +58,7 @@ class TradingEngine:
 
         if not settings:
             logger.error(f"No settings for mode {mode.value}")
-            self._running = False
+            self._running_modes.discard(mode)
             return
 
         symbols: list[tuple[str, MarketType]] = []
@@ -66,40 +69,47 @@ class TradingEngine:
 
         if not symbols:
             logger.warning(f"Engine started but no pairs configured for mode {mode.value}")
-            self._running = False
+            self._running_modes.discard(mode)
             return
 
+        mode_tasks: dict[str, asyncio.Task] = {}
         for symbol, market_type in symbols:
             key = f"{symbol}_{market_type.value}"
-            if key not in self._tasks:
-                self._tasks[key] = asyncio.create_task(
-                    self._symbol_loop(symbol, market_type, mode, settings)
-                )
+            mode_tasks[key] = asyncio.create_task(
+                self._symbol_loop(symbol, market_type, mode, settings)
+            )
 
         # Also start position monitor
-        self._tasks["__monitor__"] = asyncio.create_task(
+        mode_tasks["__monitor__"] = asyncio.create_task(
             self.monitor_positions(mode)
         )
+        self._tasks[mode] = mode_tasks
 
-        logger.info(f"Engine running {len(self._tasks)-1} symbol loops [{mode.value}]")
+        logger.info(f"Engine running {len(mode_tasks)-1} symbol loops [{mode.value}]")
 
-    async def stop(self):
-        self._running = False
-        for task in self._tasks.values():
+    async def stop(self, mode: Optional[TradingMode] = None):
+        if mode is None:
+            for running_mode in list(self._running_modes):
+                await self.stop(running_mode)
+            logger.info("VOLTAGE Engine stopped")
+            return
+
+        self._running_modes.discard(mode)
+        mode_tasks = self._tasks.pop(mode, {})
+        for task in mode_tasks.values():
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-        self._tasks.clear()
-        logger.info("VOLTAGE Engine stopped")
+        logger.info(f"VOLTAGE Engine stopped [{mode.value}]")
 
     async def _symbol_loop(
         self, symbol: str, market_type: MarketType, mode: TradingMode, settings: BotSettings
     ):
         interval_secs = 60 * 15   # analyse every 15 min
         logger.info(f"Loop: {symbol} {market_type.value} [{mode.value}]")
-        while self._running:
+        while mode in self._running_modes:
             try:
                 await self._analyze_and_trade(symbol, market_type, mode, settings)
             except asyncio.CancelledError:
@@ -508,7 +518,7 @@ class TradingEngine:
 
     async def monitor_positions(self, mode: TradingMode):
         """Monitor open positions: update PnL and check paper TP/SL."""
-        while self._running:
+        while mode in self._running_modes:
             try:
                 async with AsyncSessionLocal() as db:
                     r = await db.execute(
@@ -533,7 +543,7 @@ class TradingEngine:
                         trade.unrealized_pnl = round(unr, 6)
 
                         # Paper/backtest: check TP/SL
-                        if mode in (TradingMode.PAPER, TradingMode.BACKTEST):
+                        if mode == TradingMode.PAPER:
                             await self.paper.check_tp_sl(db, trade, current_price)
 
                     await db.commit()
@@ -563,6 +573,8 @@ class TradingEngine:
         r = await db.execute(select(BotSettings).where(BotSettings.mode == mode))
         return r.scalar_one_or_none()
 
+    def is_running(self, mode: TradingMode) -> bool:
+        return mode in self._running_modes
+
 # Global singleton — imported by routes and main
 engine = TradingEngine()
-

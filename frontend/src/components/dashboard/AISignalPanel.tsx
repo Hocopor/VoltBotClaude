@@ -73,10 +73,14 @@ export default function AISignalPanel({
         <div className="flex-1 flex flex-col items-center justify-center text-center py-2">
           <div className="text-2xl mb-1 opacity-30">⚡</div>
           <p className="text-xs text-voltage-muted">
-            Engine scans {symbol} every 15 min using all 6 VOLTAGE filters.
+            {mode === 'backtest'
+              ? 'Backtest does not use the live engine button. Run historical sessions from the Backtest page.'
+              : `Engine scans ${symbol} every 15 min using all 6 VOLTAGE filters.`}
           </p>
           <p className="text-[10px] text-voltage-border mt-1">
-            Start the engine to see live signals.
+            {mode === 'backtest'
+              ? 'Use the Backtest page for historical runs and results.'
+              : 'Start the engine to see live signals.'}
           </p>
         </div>
       )}

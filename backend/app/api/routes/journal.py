@@ -157,22 +157,23 @@ async def daily_pnl(
 @router.get("/pnl/monthly")
 async def monthly_pnl(mode: TradingMode, db: AsyncSession = Depends(get_db)):
     """Get monthly PnL breakdown."""
+    month_expr = func.date_trunc("month", JournalEntry.exit_time)
     result = await db.execute(
         select(
-            func.to_char(JournalEntry.exit_time, "YYYY-MM").label("month"),
+            month_expr.label("month_start"),
             func.sum(JournalEntry.net_pnl).label("pnl"),
             func.count(JournalEntry.id).label("trades"),
             func.sum(case((JournalEntry.net_pnl > 0, 1), else_=0)).label("wins"),
         ).where(
             JournalEntry.mode == mode,
             JournalEntry.exit_time.isnot(None),
-        ).group_by(func.to_char(JournalEntry.exit_time, "YYYY-MM")).order_by(func.to_char(JournalEntry.exit_time, "YYYY-MM"))
+        ).group_by(month_expr).order_by(month_expr)
     )
     rows = result.all()
     return {
         "monthly": [
             {
-                "month": r.month,
+                "month": r.month_start.strftime("%Y-%m") if r.month_start else None,
                 "pnl": round(float(r.pnl), 4),
                 "trades": r.trades,
                 "wins": r.wins,
