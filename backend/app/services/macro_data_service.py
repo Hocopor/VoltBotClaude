@@ -116,8 +116,8 @@ class MacroDataService:
         self,
         series: dict[str, float | int],
         timestamp_ms: int,
-        default: float | int,
-    ) -> float | int:
+        default: float | int | None,
+    ) -> float | int | None:
         day_key = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date().isoformat()
         return series.get(day_key, default)
 

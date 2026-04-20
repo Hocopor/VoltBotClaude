@@ -13,6 +13,10 @@ from app.models import BotSettings, TradingMode
 router = APIRouter()
 
 
+def _default_scan_interval_minutes(mode: TradingMode) -> int:
+    return 240 if mode == TradingMode.BACKTEST else 15
+
+
 class SettingsUpdate(BaseModel):
     spot_pairs: Optional[list[str]] = None
     futures_pairs: Optional[list[str]] = None
@@ -27,6 +31,7 @@ class SettingsUpdate(BaseModel):
     risk_per_trade_pct: Optional[float] = None
     max_open_positions: Optional[int] = None
     ai_confidence_threshold: Optional[float] = None
+    scan_interval_minutes: Optional[int] = None
     default_leverage: Optional[int] = None
     auto_trading_enabled: Optional[bool] = None
     backtest_start_date: Optional[str] = None
@@ -42,7 +47,7 @@ async def get_settings(mode: TradingMode, db: AsyncSession = Depends(get_db)):
     s = result.scalar_one_or_none()
     if not s:
         # Create default settings
-        s = BotSettings(mode=mode)
+        s = BotSettings(mode=mode, scan_interval_minutes=_default_scan_interval_minutes(mode))
         db.add(s)
         await db.commit()
         await db.refresh(s)
@@ -61,7 +66,7 @@ async def update_settings(
     )
     s = result.scalar_one_or_none()
     if not s:
-        s = BotSettings(mode=mode)
+        s = BotSettings(mode=mode, scan_interval_minutes=_default_scan_interval_minutes(mode))
         db.add(s)
 
     for field, value in payload.dict(exclude_none=True).items():
@@ -97,6 +102,7 @@ def _settings_to_dict(s: BotSettings) -> dict:
         "risk_per_trade_pct": s.risk_per_trade_pct,
         "max_open_positions": s.max_open_positions,
         "ai_confidence_threshold": s.ai_confidence_threshold,
+        "scan_interval_minutes": s.scan_interval_minutes,
         "default_leverage": s.default_leverage,
         "auto_trading_enabled": s.auto_trading_enabled,
         "backtest_start_date": s.backtest_start_date.isoformat() if s.backtest_start_date else None,

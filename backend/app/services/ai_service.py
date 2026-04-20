@@ -57,7 +57,7 @@ Stochastic K/D: {stoch_k}/{stoch_d}
 Williams %R: {williams_r}
 
 === MARKET CONTEXT ===
-BTC Dominance: {btc_dominance}%
+BTC Dominance: {btc_dominance_display}
 Fear & Greed: {fear_greed} ({fear_greed_zone})
 Scenario: {scenario}
 
@@ -144,6 +144,15 @@ class AIService:
         self.model = settings.DEEPSEEK_MODEL
         self._codex_token: Optional[str] = None
 
+    @staticmethod
+    def _format_btc_dominance(value: object) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.2f}%"
+        except (TypeError, ValueError):
+            return "N/A"
+
     async def _call_deepseek(self, messages: list[dict], max_tokens: int = 2000) -> str:
         """Make a call to DeepSeek API."""
         headers = {
@@ -207,7 +216,9 @@ class AIService:
                 stoch_k=getattr(f3, "stochastic_k", 50),
                 stoch_d=getattr(f3, "stochastic_d", 50),
                 williams_r=getattr(f3, "williams_r", -50),
-                btc_dominance=getattr(voltage_signal.filter1, "btc_dominance", 50) if voltage_signal.filter1 else 50,
+                btc_dominance_display=self._format_btc_dominance(
+                    getattr(voltage_signal.filter1, "btc_dominance", None) if voltage_signal.filter1 else None
+                ),
                 fear_greed=getattr(voltage_signal.filter1, "fear_greed_index", 50) if voltage_signal.filter1 else 50,
                 fear_greed_zone=getattr(voltage_signal.filter1, "fear_greed_zone", "neutral") if voltage_signal.filter1 else "neutral",
                 scenario=voltage_signal.market_scenario.value,

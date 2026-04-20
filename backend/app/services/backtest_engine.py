@@ -55,6 +55,7 @@ class BacktestEngine:
         risk_per_trade_pct: float = 2.0,
         ai_confidence_threshold: float = 0.60,
         leverage: int = 1,
+        scan_interval_minutes: int = 240,
     ) -> dict:
         self._active[session_id] = True
         cat = "spot" if market_type == MarketType.SPOT else "linear"
@@ -76,11 +77,6 @@ class BacktestEngine:
             equity_curve = [{"time": start_date.isoformat(), "equity": balance}]
             total = len(symbols)
             macro_context = await macro_data_service.get_historical_context(start_date, end_date)
-            if macro_context.get("btc_dominance_source") == "unavailable_no_historical_btc_dominance_provider":
-                raise RuntimeError(
-                    "Historical BTC dominance is unavailable from configured providers. "
-                    "The backtest will not run with a synthetic BTC dominance fallback."
-                )
             stopped = False
 
             for idx, symbol in enumerate(symbols):
@@ -105,6 +101,7 @@ class BacktestEngine:
                     risk_pct=risk_per_trade_pct,
                     conf_threshold=ai_confidence_threshold,
                     leverage=leverage,
+                    scan_interval_minutes=scan_interval_minutes,
                     session_id=session_id,
                     symbol_index=idx,
                     total_symbols=total,
@@ -335,6 +332,7 @@ class BacktestEngine:
         risk_pct: float,
         conf_threshold: float,
         leverage: int,
+        scan_interval_minutes: int,
         session_id: int,
         symbol_index: int,
         total_symbols: int,
@@ -351,6 +349,8 @@ class BacktestEngine:
 
         start_ms = int(start_date.timestamp() * 1000)
         end_ms = int(end_date.timestamp() * 1000)
+        scan_interval_ms = max(int(scan_interval_minutes), 1) * 60 * 1000
+        last_scan_ts: Optional[int] = None
 
         for i in range(min_bars, len(h4)):
             if not self._active.get(session_id):
@@ -360,6 +360,9 @@ class BacktestEngine:
             ts = int(bar["timestamp"])
             if ts < start_ms or ts > end_ms:
                 continue
+            if last_scan_ts is not None and ts - last_scan_ts < scan_interval_ms:
+                continue
+            last_scan_ts = ts
 
             current_close = float(bar["close"])
             current_fear_greed = int(
@@ -369,13 +372,11 @@ class BacktestEngine:
                     50,
                 )
             )
-            current_btc_dominance = float(
-                macro_data_service.value_for_timestamp(
+            current_btc_dominance = macro_data_service.value_for_timestamp(
                     macro_context.get("btc_dominance", {}),
                     ts,
-                    50.0,
+                    None,
                 )
-            )
 
             # Check existing trade first
             if open_trade:
@@ -543,7 +544,7 @@ class BacktestEngine:
         strategy_signal,
         reason: str,
         fear_greed: int,
-        btc_dominance: float,
+        btc_dominance: Optional[float],
     ) -> None:
         decision_stats[reason] = decision_stats.get(reason, 0) + 1
         if len(ai_analyses) < 1000:
@@ -559,7 +560,7 @@ class BacktestEngine:
                     "filters_passed": strategy_signal.filters_passed,
                     "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
                     "fear_greed": fear_greed,
-                    "btc_dominance": round(btc_dominance, 4),
+                    "btc_dominance": round(btc_dominance, 4) if btc_dominance is not None else None,
                     "entry_price": ai_result.get("entry_price"),
                     "stop_loss": ai_result.get("stop_loss"),
                     "take_profit_1": ai_result.get("take_profit_1"),
@@ -587,7 +588,7 @@ class BacktestEngine:
                 "filters_passed": strategy_signal.filters_passed,
                 "scenario": ai_result.get("scenario", strategy_signal.market_scenario.value),
                 "fear_greed": fear_greed,
-                "btc_dominance": round(btc_dominance, 4),
+                "btc_dominance": round(btc_dominance, 4) if btc_dominance is not None else None,
                 "entry_price": ai_result.get("entry_price"),
                 "stop_loss": ai_result.get("stop_loss"),
                 "reasoning": ai_result.get("reasoning", "")[:1000],

@@ -123,6 +123,7 @@ class BotSettings(Base):
     max_open_positions: Mapped[int] = mapped_column(Integer, default=5)
     max_positions_per_sector: Mapped[int] = mapped_column(Integer, default=3)
     ai_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.72)
+    scan_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
 
     # Leverage (futures)
     default_leverage: Mapped[int] = mapped_column(Integer, default=3)

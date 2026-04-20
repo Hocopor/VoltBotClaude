@@ -205,10 +205,12 @@ async def run_manual_analysis(
     except Exception as exc:
         raise HTTPException(503, f"Fear & Greed data unavailable for analysis: {exc}") from exc
 
+    btc_dominance = None
+    btc_dominance_source = "unavailable"
     try:
         btc_dominance, btc_dominance_source = await bybit_service.get_btc_dominance_snapshot()
     except Exception as exc:
-        raise HTTPException(503, f"BTC dominance data unavailable for analysis: {exc}") from exc
+        btc_dominance_source = "unavailable"
 
     try:
         ticker = await bybit_service.get_ticker_info(symbol, cat)

@@ -47,8 +47,8 @@ class MarketScenario(str, Enum):
 @dataclass
 class Filter1Result:
     """BTC Dominance & Market Sentiment"""
-    btc_dominance: float = 0.0
-    btc_dominance_trend: str = "stable"      # rising | falling | stable
+    btc_dominance: Optional[float] = None
+    btc_dominance_trend: str = "stable"      # rising | falling | stable | unavailable
     fear_greed_index: int = 50
     fear_greed_zone: str = "neutral"         # extreme_fear | fear | neutral | greed | extreme_greed
     total_market_cap_trend: str = "stable"
@@ -239,7 +239,7 @@ class VoltageStrategy:
         ohlcv_4h: pd.DataFrame,
         ohlcv_1h: pd.DataFrame,
         orderbook: Optional[dict] = None,
-        btc_dominance: float = 50.0,
+        btc_dominance: Optional[float] = None,
         fear_greed: int = 50,
         total_mcap_change_24h: float = 0.0,
     ) -> VOLTAGESignal:
@@ -293,13 +293,16 @@ class VoltageStrategy:
     # ─── FILTER 1: BTC Dominance & Market Sentiment ──────────
 
     def _filter1_btc_sentiment(
-        self, btc_d: float, fg: int, mcap_chg: float
+        self, btc_d: Optional[float], fg: int, mcap_chg: float
     ) -> Filter1Result:
         notes = []
         score = 0.0
 
         # BTC.D тренд
-        if btc_d < self.BTC_D_ALTSEASON_MAX:
+        if btc_d is None:
+            btc_trend = "unavailable"
+            notes.append("BTC.D unavailable - dominance factor ignored")
+        elif btc_d < self.BTC_D_ALTSEASON_MAX:
             btc_trend = "falling"
             notes.append(f"BTC.D={btc_d:.1f}% — Альтсезон ✓")
             score += 0.4
@@ -836,7 +839,7 @@ class VoltageStrategy:
 
         # ── CRYPTO TRIGGER для ЛОНГА (все 6 условий по спецификации) ──
         # Условие 1: BTC.D падает или стабилен (альтсезон)
-        cond1_btc = f1.btc_dominance_trend in ("falling", "stable") or self.is_major
+        cond1_btc = f1.btc_dominance_trend in ("falling", "stable", "unavailable") or self.is_major
         # Условие 2: EMA21 > EMA55 на 1D и 4H
         cond2_ema = f2.daily_ema21_above_ema55 and f2.h4_ema21_above_ema55
         # Условие 3: RSI откатал к 40-45 и разворачивается вверх

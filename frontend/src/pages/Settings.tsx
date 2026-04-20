@@ -278,6 +278,15 @@ export default function Settings() {
             <p className="text-[10px] text-voltage-muted mt-1">Minimum confidence to enter (0-1)</p>
           </div>
           <div>
+            <label>Scan Frequency (minutes)</label>
+            <input type="number" min="1" max="1440" defaultValue={settings.scan_interval_minutes ?? (mode === 'backtest' ? 240 : 15)} onBlur={e => updateMut.mutate({ scan_interval_minutes: +e.target.value })} />
+            <p className="text-[10px] text-voltage-muted mt-1">
+              {mode === 'backtest'
+                ? 'Captured when a new backtest session starts.'
+                : 'Running engine picks up updated value on the next cycle.'}
+            </p>
+          </div>
+          <div>
             <label>Default Leverage (Futures)</label>
             <input type="number" min="1" max="20" defaultValue={settings.default_leverage} onBlur={e => updateMut.mutate({ default_leverage: +e.target.value })} />
           </div>
@@ -304,7 +313,7 @@ export default function Settings() {
           />
           <div>
             <span className="text-sm font-semibold">Auto Trading Enabled</span>
-            <p className="text-xs text-voltage-muted">When enabled, the bot automatically places orders when AI confidence ≥ threshold and all required VOLTAGE filters pass.</p>
+            <p className="text-xs text-voltage-muted">When enabled, the bot automatically places orders when AI confidence clears the threshold and the minimum VOLTAGE filter gate passes.</p>
           </div>
         </label>
       </Section>

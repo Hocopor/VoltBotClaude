@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete, func
 
 from app.database import get_db
-from app.models import BacktestSession, MarketType, Trade, Order, TradingMode, JournalEntry
+from app.models import BacktestSession, MarketType, Trade, Order, TradingMode, JournalEntry, BotSettings
 from app.services.backtest_engine import backtest_engine
 
 router = APIRouter()
@@ -34,6 +34,7 @@ class BacktestCreate(BaseModel):
     risk_per_trade_pct: float = 2.0
     ai_confidence_threshold: float = 0.60
     leverage: int = 1
+    scan_interval_minutes: Optional[int] = None
 
 
 @router.post("/start")
@@ -52,6 +53,14 @@ async def start_backtest(
         raise HTTPException(400, "At least one symbol required")
     if len(payload.symbols) > 20:
         raise HTTPException(400, "Maximum 20 symbols per backtest")
+
+    settings_result = await db.execute(
+        select(BotSettings).where(BotSettings.mode == TradingMode.BACKTEST)
+    )
+    mode_settings = settings_result.scalar_one_or_none()
+    scan_interval_minutes = payload.scan_interval_minutes or (
+        mode_settings.scan_interval_minutes if mode_settings and mode_settings.scan_interval_minutes else 240
+    )
 
     session = BacktestSession(
         name=payload.name,
@@ -77,6 +86,7 @@ async def start_backtest(
         risk_per_trade_pct=payload.risk_per_trade_pct,
         ai_confidence_threshold=payload.ai_confidence_threshold,
         leverage=payload.leverage,
+        scan_interval_minutes=scan_interval_minutes,
     )
 
     return {"session_id": session.id, "status": "started", "name": payload.name}

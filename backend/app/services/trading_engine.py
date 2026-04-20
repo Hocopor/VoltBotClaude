@@ -107,15 +107,20 @@ class TradingEngine:
     async def _symbol_loop(
         self, symbol: str, market_type: MarketType, mode: TradingMode, settings: BotSettings
     ):
-        interval_secs = 60 * 15   # analyse every 15 min
         logger.info(f"Loop: {symbol} {market_type.value} [{mode.value}]")
+        current_settings = settings
         while mode in self._running_modes:
             try:
-                await self._analyze_and_trade(symbol, market_type, mode, settings)
+                async with AsyncSessionLocal() as db:
+                    latest_settings = await self._get_settings(db, mode)
+                    if latest_settings:
+                        current_settings = latest_settings
+                await self._analyze_and_trade(symbol, market_type, mode, current_settings)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Loop error {symbol}: {e}", exc_info=True)
+            interval_secs = max(5, int(max(getattr(current_settings, "scan_interval_minutes", 15), 1) * 60))
             await asyncio.sleep(interval_secs)
 
     async def _analyze_and_trade(
@@ -161,7 +166,7 @@ class TradingEngine:
         except Exception as exc:
             logger.warning(f"BTC dominance fetch failed for {symbol}: {exc}")
 
-        if fear_greed is None or btc_dominance is None:
+        if fear_greed is None:
             logger.warning(
                 f"Skipping analysis for {symbol}: market macro context unavailable "
                 f"(fear_greed={fear_greed}, btc_dominance={btc_dominance})"

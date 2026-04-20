@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { tradingApi } from '../../api'
+import { settingsApi, tradingApi } from '../../api'
 import clsx from 'clsx'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
@@ -30,6 +30,11 @@ export default function AISignalPanel({
     queryKey: ['positions', mode],
     queryFn: () => tradingApi.openPositions(mode).then(r => r.data),
     refetchInterval: 15_000,
+  })
+  const { data: settings } = useQuery({
+    queryKey: ['settings-ai-panel', mode],
+    queryFn: () => settingsApi.get(mode).then(r => r.data),
+    enabled: mode !== 'backtest',
   })
 
   const pos = (posData?.positions ?? []).find((p: any) => p.symbol === symbol)
@@ -96,7 +101,7 @@ export default function AISignalPanel({
           <p className="text-xs text-voltage-muted">
             {mode === 'backtest'
               ? 'Backtest does not use the live engine button. Run historical sessions from the Backtest page.'
-              : `Engine scans ${symbol} every 15 min using all 6 VOLTAGE filters.`}
+              : `Engine scans ${symbol} on the configured schedule (${settings?.scan_interval_minutes ?? 15} min) using the VOLTAGE pipeline.`}
           </p>
           <p className="text-[10px] text-voltage-border mt-1">
             {mode === 'backtest'
