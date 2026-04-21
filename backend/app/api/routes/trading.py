@@ -15,6 +15,7 @@ from app.database import get_db
 from app.models import BotSettings, TradingMode, MarketType, Trade, TradeStatus, AIAnalysisLog, AISignal
 from app.services.trading_engine import engine
 from app.services.bybit_service import bybit_service
+from app.services.capital_service import capital_service
 from app.services.ai_service import ai_service
 from app.services.strategy.voltage_strategy import VoltageStrategy
 from app.websocket.manager import manager, Events
@@ -155,13 +156,23 @@ async def get_balance(mode: TradingMode, db: AsyncSession = Depends(get_db)):
     elif mode == TradingMode.PAPER:
         if not settings:
             return {"spot": 10000, "futures": 10000}
+        snapshot = await capital_service.compute_paper_snapshot(db, settings)
+        spot = snapshot["spot"]
+        futures = snapshot["futures"]
         return {
             "mode": "paper",
-            "spot_balance": settings.paper_current_balance_spot,
+            "spot_balance": spot.available,
+            "spot_equity": spot.equity,
             "spot_initial": settings.paper_initial_balance_spot,
-            "futures_balance": settings.paper_current_balance_futures,
+            "spot_reserved": spot.reserved_capital,
+            "spot_unrealized": spot.unrealized,
+            "futures_balance": futures.available,
+            "futures_equity": futures.equity,
             "futures_initial": settings.paper_initial_balance_futures,
-            "total": settings.paper_current_balance_spot + settings.paper_current_balance_futures,
+            "futures_reserved": futures.reserved_capital,
+            "futures_unrealized": futures.unrealized,
+            "total_available": spot.available + futures.available,
+            "total_equity": spot.equity + futures.equity,
         }
 
     elif mode == TradingMode.BACKTEST:
@@ -338,25 +349,31 @@ async def place_manual_trade(
     # Auto-calculate qty from risk if not provided
     qty = payload.qty
     if not qty or qty <= 0:
-        # Use 2% of allocated/available balance by default
+        # Use configured risk on actual available capital
         try:
             if mode == TradingMode.REAL:
-                balance = settings.spot_allocated_balance or await _bbs.get_usdt_balance()
+                configured_budget = settings.spot_allocated_balance if payload.market_type == MarketType.SPOT else settings.futures_allocated_balance
+                if configured_budget:
+                    reserved = await capital_service.get_mode_reserved_capital(db, mode, payload.market_type)
+                    balance = max(float(configured_budget) - reserved, 0.0)
+                else:
+                    balance = await _bbs.get_usdt_balance()
             elif mode == TradingMode.PAPER:
-                balance = (settings.paper_current_balance_spot
-                           if payload.market_type == MarketType.SPOT
-                           else settings.paper_current_balance_futures)
+                paper_snapshot = await capital_service.compute_paper_snapshot(db, settings)
+                balance = paper_snapshot[payload.market_type.value].available
             else:
-                balance = settings.backtest_initial_balance_spot
+                balance = settings.backtest_initial_balance_spot if payload.market_type == MarketType.SPOT else settings.backtest_initial_balance_futures
             risk_amount = (balance or 1000) * (settings.risk_per_trade_pct / 100)
             cat_tmp = "spot" if payload.market_type == MarketType.SPOT else "linear"
+            leverage = settings.default_leverage if payload.market_type == MarketType.FUTURES else 1
             qty = await _bbs.calculate_position_qty(
                 symbol=payload.symbol,
                 entry_price=current_price,
                 risk_amount_usdt=risk_amount,
                 stop_loss_price=payload.stop_loss,
                 category=cat_tmp,
-                leverage=1,
+                leverage=leverage,
+                capital_limit_usdt=balance,
             )
         except Exception:
             qty = 0.0
@@ -377,6 +394,7 @@ async def place_manual_trade(
         take_profit_1_price=payload.take_profit_1,
         take_profit_2_price=payload.take_profit_2,
         take_profit_3_price=payload.take_profit_3,
+        leverage=settings.default_leverage if payload.market_type == MarketType.FUTURES else 1,
         ai_signal=None,
         ai_analysis_entry="Manual trade",
     )

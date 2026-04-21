@@ -473,6 +473,15 @@ class BacktestEngine:
                     decision_stats["risk_per_unit_zero"] = decision_stats.get("risk_per_unit_zero", 0) + 1
                     continue
                 qty = (risk_amount * leverage) / risk_per_unit
+                if current_close > 0:
+                    if market_type == MarketType.SPOT:
+                        max_qty_from_capital = (balance * 0.999) / current_close
+                    else:
+                        max_qty_from_capital = (balance * leverage * 0.999) / current_close
+                    qty = min(qty, max_qty_from_capital)
+                if qty <= 0:
+                    decision_stats["qty_non_positive"] = decision_stats.get("qty_non_positive", 0) + 1
+                    continue
 
                 open_trade = {
                     "symbol": symbol,

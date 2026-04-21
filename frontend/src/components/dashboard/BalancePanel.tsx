@@ -20,6 +20,15 @@ export default function BalancePanel({ mode }: { mode: string }) {
           ...(data.spot_allocated ? [['Spot Budget', `${data.spot_allocated.toFixed(2)}`] as [string, string]] : []),
           ...(data.futures_allocated ? [['Fut. Budget', `${data.futures_allocated.toFixed(2)}`] as [string, string]] : []),
         ]
+      : mode === 'paper'
+      ? [
+          ['Spot Available', `${(data.spot_balance ?? data.spot_initial ?? 0).toFixed(2)} USDT`],
+          ['Spot Equity', `${(data.spot_equity ?? data.spot_initial ?? 0).toFixed(2)} USDT`],
+          ['Futures Available', `${(data.futures_balance ?? data.futures_initial ?? 0).toFixed(2)} USDT`],
+          ['Futures Equity', `${(data.futures_equity ?? data.futures_initial ?? 0).toFixed(2)} USDT`],
+          ['Total Available', `${(data.total_available ?? 0).toFixed(2)} USDT`],
+          ['Total Equity', `${(data.total_equity ?? 0).toFixed(2)} USDT`],
+        ]
       : [
           ['Spot', `${(data.spot_balance ?? data.spot_initial ?? 0).toFixed(2)} USDT`],
           ['Futures', `${(data.futures_balance ?? data.futures_initial ?? 0).toFixed(2)} USDT`],

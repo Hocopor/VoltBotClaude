@@ -388,6 +388,7 @@ class BybitService:
         stop_loss_price: float,
         category: str = "spot",
         leverage: int = 1,
+        capital_limit_usdt: float | None = None,
     ) -> float:
         """
         Calculate position size based on VOLTAGE risk management.
@@ -397,6 +398,12 @@ class BybitService:
         if risk_per_unit == 0:
             return 0.0
         qty = (risk_amount_usdt * leverage) / risk_per_unit
+        if capital_limit_usdt is not None and capital_limit_usdt > 0 and entry_price > 0:
+            if category == "spot":
+                max_qty_from_capital = (capital_limit_usdt * 0.999) / entry_price
+            else:
+                max_qty_from_capital = (capital_limit_usdt * leverage * 0.999) / entry_price
+            qty = min(qty, max_qty_from_capital)
         qty_dec, _ = await self.get_quantity_precision(symbol, category)
         return round(qty, qty_dec)
 

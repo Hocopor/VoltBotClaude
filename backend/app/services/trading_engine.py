@@ -20,6 +20,7 @@ from app.models import (
     TradingMode, MarketType, TradeStatus, AIAnalysisLog, AISignal, BotSettings
 )
 from app.services.bybit_service import bybit_service
+from app.services.capital_service import capital_service
 from app.services.ai_service import ai_service
 from app.services.strategy.voltage_strategy import VoltageStrategy, Signal
 from app.services.paper_trading import PaperTradingEngine
@@ -324,43 +325,7 @@ class TradingEngine:
             logger.warning(f"No SL for {symbol} - skipping trade")
             return False, "stop_loss_missing", None
 
-        if mode == TradingMode.REAL:
-            balance = settings.spot_allocated_balance if market_type == MarketType.SPOT else settings.futures_allocated_balance
-            if not balance:
-                try:
-                    balance = await bybit_service.get_usdt_balance()
-                except Exception:
-                    balance = 1000.0
-        elif mode == TradingMode.PAPER:
-            balance = (settings.paper_current_balance_spot
-                       if market_type == MarketType.SPOT
-                       else settings.paper_current_balance_futures)
-        else:
-            return False, "unsupported_mode", None  # Backtest handled separately
-
-        if not balance or balance <= 0:
-            logger.warning(f"No balance for {symbol} [{mode.value}]")
-            return False, "balance_unavailable", None
-
-        risk_amount = balance * (settings.risk_per_trade_pct / 100)
         leverage = settings.default_leverage if market_type == MarketType.FUTURES else 1
-
-        try:
-            qty = await bybit_service.calculate_position_qty(
-                symbol=symbol,
-                entry_price=entry_price,
-                risk_amount_usdt=risk_amount,
-                stop_loss_price=stop_loss,
-                category=cat,
-                leverage=leverage,
-            )
-        except Exception as e:
-            logger.error(f"Qty calculation failed {symbol}: {e}")
-            return False, "qty_calculation_failed", None
-
-        if qty <= 0:
-            logger.warning(f"qty={qty} for {symbol} - skipping")
-            return False, "qty_non_positive", None
 
         async with AsyncSessionLocal() as db:
             # Guard: no duplicate open positions for same symbol
@@ -386,6 +351,46 @@ class TradingEngine:
             if open_count >= settings.max_open_positions:
                 logger.info(f"Max positions reached ({open_count}/{settings.max_open_positions})")
                 return False, "max_positions_reached", None
+
+            if mode == TradingMode.REAL:
+                configured_budget = settings.spot_allocated_balance if market_type == MarketType.SPOT else settings.futures_allocated_balance
+                if configured_budget:
+                    reserved = await capital_service.get_mode_reserved_capital(db, mode, market_type)
+                    balance = max(float(configured_budget) - reserved, 0.0)
+                else:
+                    try:
+                        balance = await bybit_service.get_usdt_balance()
+                    except Exception:
+                        balance = 0.0
+            elif mode == TradingMode.PAPER:
+                paper_snapshot = await capital_service.compute_paper_snapshot(db, settings)
+                balance = paper_snapshot[market_type.value].available
+            else:
+                return False, "unsupported_mode", None  # Backtest handled separately
+
+            if not balance or balance <= 0:
+                logger.warning(f"No available balance for {symbol} [{mode.value}]")
+                return False, "balance_unavailable", None
+
+            risk_amount = balance * (settings.risk_per_trade_pct / 100)
+
+            try:
+                qty = await bybit_service.calculate_position_qty(
+                    symbol=symbol,
+                    entry_price=entry_price,
+                    risk_amount_usdt=risk_amount,
+                    stop_loss_price=stop_loss,
+                    category=cat,
+                    leverage=leverage,
+                    capital_limit_usdt=balance,
+                )
+            except Exception as e:
+                logger.error(f"Qty calculation failed {symbol}: {e}")
+                return False, "qty_calculation_failed", None
+
+            if qty <= 0:
+                logger.warning(f"qty={qty} for {symbol} - skipping")
+                return False, "qty_non_positive", None
 
             trade = Trade(
                 mode=mode,

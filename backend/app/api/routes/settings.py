@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import BotSettings, TradingMode
+from app.services.capital_service import capital_service
 
 router = APIRouter()
 
@@ -51,7 +52,7 @@ async def get_settings(mode: TradingMode, db: AsyncSession = Depends(get_db)):
         db.add(s)
         await db.commit()
         await db.refresh(s)
-    return _settings_to_dict(s)
+    return await _settings_to_dict(db, s)
 
 
 @router.patch("/{mode}")
@@ -81,10 +82,17 @@ async def update_settings(
 
     await db.commit()
     await db.refresh(s)
-    return _settings_to_dict(s)
+    return await _settings_to_dict(db, s)
 
 
-def _settings_to_dict(s: BotSettings) -> dict:
+async def _settings_to_dict(db: AsyncSession, s: BotSettings) -> dict:
+    paper_current_balance_spot = s.paper_current_balance_spot
+    paper_current_balance_futures = s.paper_current_balance_futures
+    if s.mode == TradingMode.PAPER:
+        snapshot = await capital_service.compute_paper_snapshot(db, s)
+        paper_current_balance_spot = snapshot["spot"].available
+        paper_current_balance_futures = snapshot["futures"].available
+
     return {
         "mode": s.mode.value,
         "spot_pairs": s.spot_pairs or [],
@@ -95,8 +103,8 @@ def _settings_to_dict(s: BotSettings) -> dict:
         "futures_allocated_balance": s.futures_allocated_balance,
         "paper_initial_balance_spot": s.paper_initial_balance_spot,
         "paper_initial_balance_futures": s.paper_initial_balance_futures,
-        "paper_current_balance_spot": s.paper_current_balance_spot,
-        "paper_current_balance_futures": s.paper_current_balance_futures,
+        "paper_current_balance_spot": paper_current_balance_spot,
+        "paper_current_balance_futures": paper_current_balance_futures,
         "backtest_initial_balance_spot": s.backtest_initial_balance_spot,
         "backtest_initial_balance_futures": s.backtest_initial_balance_futures,
         "risk_per_trade_pct": s.risk_per_trade_pct,
