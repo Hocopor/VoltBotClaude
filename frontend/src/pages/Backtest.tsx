@@ -367,7 +367,7 @@ export default function Backtest() {
                       <table className="w-full text-xs font-mono">
                         <thead>
                           <tr className="text-voltage-muted border-b border-voltage-border">
-                            {['Symbol','Side','Entry','Exit','PnL','Conf.','Scenario','F&G','BTC.D','Reason'].map(h => (
+                            {['Symbol','Side','Entry','Avg Exit','Final Exit','PnL','Conf.','Scenario','F&G','BTC.D','Exit Path','Reason'].map(h => (
                               <th key={h} className="px-3 py-2 text-left whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -380,7 +380,8 @@ export default function Backtest() {
                                 <span className={t.side === 'long' ? 'badge-long' : 'badge-short'}>{t.side}</span>
                               </td>
                               <td className="px-3 py-1.5">{t.entry?.toFixed(4)}</td>
-                              <td className="px-3 py-1.5">{t.exit?.toFixed(4) ?? '—'}</td>
+                              <td className="px-3 py-1.5">{t.avg_exit != null ? t.avg_exit.toFixed(4) : '—'}</td>
+                              <td className="px-3 py-1.5">{t.final_exit != null ? t.final_exit.toFixed(4) : '—'}</td>
                               <td className={`px-3 py-1.5 font-bold ${t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
                                 {t.pnl >= 0 ? '+' : ''}{t.pnl?.toFixed(4)}
                               </td>
@@ -392,7 +393,8 @@ export default function Backtest() {
                               <td className="px-3 py-1.5 text-voltage-muted">
                                 {t.btc_dominance != null ? t.btc_dominance.toFixed(2) : '—'}
                               </td>
-                              <td className="px-3 py-1.5 text-voltage-muted">{t.reason}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{t.exit_path ?? '—'}</td>
+                              <td className="px-3 py-1.5 text-voltage-muted">{t.reason_label ?? t.reason}</td>
                             </tr>
                           ))}
                         </tbody>

@@ -754,15 +754,70 @@ class BacktestEngine:
         }
 
     def _summary(self, t: dict) -> dict:
+        qty = float(t.get("qty") or 0.0)
+        tp_fills: list[tuple[float, float, str]] = []
+        if t.get("tp1_filled") and t.get("tp1_price_filled") is not None:
+            tp_fills.append((qty * 0.4, float(t["tp1_price_filled"]), "tp1"))
+        if t.get("tp2_filled") and t.get("tp2_price_filled") is not None:
+            tp_fills.append((qty * 0.3, float(t["tp2_price_filled"]), "tp2"))
+        if t.get("tp3_filled") and t.get("tp3_price_filled") is not None:
+            tp_fills.append((qty * 0.3, float(t["tp3_price_filled"]), "tp3"))
+
+        exit_reason = t.get("exit_reason")
+        filled_qty = sum(fill_qty for fill_qty, _, _ in tp_fills)
+        remaining_qty = max(qty - filled_qty, 0.0)
+        final_exit_price = t.get("exit_price")
+        if (
+            final_exit_price is not None
+            and remaining_qty > 1e-10
+            and exit_reason in {"stop_loss", "trailing_stop", "end_of_test"}
+        ):
+            tp_fills.append((remaining_qty, float(final_exit_price), "final"))
+        elif final_exit_price is not None and not tp_fills and qty > 0:
+            tp_fills.append((qty, float(final_exit_price), "final"))
+
+        avg_exit = None
+        exit_path: list[str] = []
+        total_exit_qty = sum(fill_qty for fill_qty, _, _ in tp_fills)
+        if total_exit_qty > 1e-10:
+            weighted_sum = sum(fill_qty * fill_price for fill_qty, fill_price, _ in tp_fills)
+            avg_exit = weighted_sum / total_exit_qty
+            exit_path = [label.upper() for _, _, label in tp_fills if label != "final"]
+
+        reason_label = exit_reason
+        if exit_reason == "stop_loss":
+            if t.get("tp2_filled"):
+                reason_label = "stop_loss_after_tp1_tp2"
+            elif t.get("tp1_filled"):
+                reason_label = "stop_loss_after_tp1"
+        elif exit_reason == "trailing_stop":
+            if t.get("tp2_filled"):
+                reason_label = "trailing_stop_after_tp1_tp2"
+            elif t.get("tp1_filled"):
+                reason_label = "trailing_stop_after_tp1"
+        elif exit_reason == "end_of_test":
+            if t.get("tp2_filled"):
+                reason_label = "end_of_test_after_tp1_tp2"
+            elif t.get("tp1_filled"):
+                reason_label = "end_of_test_after_tp1"
+
         return {
             "symbol": t.get("symbol"),
             "side": t.get("side"),
             "entry": t.get("entry_price"),
             "exit": t.get("exit_price"),
+            "final_exit": t.get("exit_price"),
+            "avg_exit": avg_exit,
             "entry_time": t.get("entry_time"),
             "exit_time": t.get("exit_time"),
             "pnl": round(t.get("net_pnl", 0), 4),
             "reason": t.get("exit_reason"),
+            "reason_label": reason_label,
+            "exit_path": " -> ".join(exit_path) if exit_path else "final_only",
+            "tp_hits": len(exit_path),
+            "tp1_filled": t.get("tp1_filled", False),
+            "tp2_filled": t.get("tp2_filled", False),
+            "tp3_filled": t.get("tp3_filled", False),
             "confidence": t.get("confidence"),
             "strategy_confidence": t.get("strategy_confidence"),
             "ai_confidence": t.get("ai_confidence"),
